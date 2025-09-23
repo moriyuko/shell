@@ -9,7 +9,7 @@ int main() {
 
   std::string input;
   
-  std::string home = getenv("HOME");
+  std::string home = getenv("HOME"); //переменная окружения для поиска домашнего каталога
   std::string history_file = home + "/.kubsh_history";
 
   std::ofstream history_out(history_file, std::ios::app);
@@ -28,6 +28,11 @@ int main() {
 
         if (history_out.is_open()) {
             history_out << input << std::endl;
+        }
+
+        if (input.substr(0, 5) == "echo ") {
+            std::cout << input.substr(5) << std::endl;
+            continue; //добавила, чтоб не было вывода ": command not found"
         }
 
         if (input == "\\q") {
