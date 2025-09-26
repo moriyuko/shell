@@ -75,7 +75,6 @@ int main() {
         }
         std::cout << input << ": command not found" << std::endl;
     }
-    
     if (history_out.is_open()) history_out.close();
     return 0;
 }
