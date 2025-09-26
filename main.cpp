@@ -35,6 +35,18 @@ int main() {
             continue; //добавила, чтоб не было вывода ": command not found"
         }
 
+        if (input.rfind("\\e $", 0) == 0) {
+            std::string var = input.substr(4);
+            const char* value = std::getenv(var.c_str());
+            if (value) {
+                std::cout << value << std::endl;
+            }
+            else {
+                std::cout << "Переменная не найдена" << std::endl;
+            }
+            continue;
+        }
+
         if (input == "\\q") {
             std::cout << "Exiting...\n";
             break;
