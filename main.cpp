@@ -2,6 +2,9 @@
 #include <string>
 #include <fstream>
 #include <cstdlib>
+#include <sstream>
+#include <unistd.h>
+#include <sys/wait.h>
 
 int main() {
   std::cout << std::unitbuf;
@@ -51,7 +54,31 @@ int main() {
             std::cout << "Exiting...\n";
             break;
         }
-        std::cout << input << ": command not found" << std::endl;
-    }
+
+        std::istringstream iss(input);
+        std::vector<std::string> tokens;
+        std::string token;
+        while (iss >> token) tokens.push_back(token);
+
+        if (tokens.empty()) continue;
+
+        // превращаем в массив char* для execvp
+        std::vector<char*> args;
+        for (auto& t : tokens) args.push_back(const_cast<char*>(t.c_str()));
+        args.push_back(nullptr);
+
+        pid_t pid = fork();
+        if (pid == 0) {
+            execvp(args[0], args.data()); // ищет в $PATH и запускает
+            std::cerr << args[0] << ": command not found" << std::endl;
+            exit(1);
+        } else if (pid > 0) {
+            int status;
+            waitpid(pid, &status, 0);
+        } else {
+            perror("fork");
+        }
+    } 
+
     return 0;
 }
