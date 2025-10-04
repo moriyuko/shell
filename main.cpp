@@ -62,6 +62,27 @@ int main() {
             break;
         }
 
+        if (input.rfind("\\l ", 0) == 0) {
+            std::string device = input.substr(3);
+            if (device.empty()) {
+                std::cout << "Usage: \\l <device>\n";
+                continue;
+            }
+
+            pid_t pid = fork();
+            if (pid == 0) {
+                execlp("lsblk", "lsblk", device.c_str(), "-o", "NAME,SIZE,TYPE,MOUNTPOINT", nullptr);
+                perror("lsblk failed");
+                exit(1);
+            } else if (pid > 0) {
+                int status;
+                waitpid(pid, &status, 0);
+            } else {
+                perror("fork failed");
+            }
+            continue;
+        }
+
         std::istringstream iss(input);
         std::vector<std::string> tokens;
         std::string token;
