@@ -5,6 +5,11 @@
 #include <sstream>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <csignal>
+
+void handle_sighup(int) {
+    std::cout << "Configuration reloaded" << std::endl;
+}
 
 int main() {
   std::cout << std::unitbuf;
@@ -19,6 +24,8 @@ int main() {
   if (!history_out.is_open()) {
     std::cerr << "History file unavailable!" << std::endl;
   }
+
+  signal(SIGHUP, handle_sighup);
 
   while (true) {
 
