@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <csignal>
+#include <vector>
 
 void handle_sighup(int) {
     std::cout << "Configuration reloaded" << std::endl;
