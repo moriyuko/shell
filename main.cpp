@@ -156,6 +156,16 @@ int main() {
             delUser(input.substr(9));
         }
 
+        // cd
+        if (input.rfind("cd ", 0) == 0) {
+            std::string path = input.substr(3);
+            if (path.empty()) path = getenv("HOME");  // cd без аргументов -> домашняя директория
+
+            if (chdir(path.c_str()) != 0) {
+                perror("cd");  // выводит ошибку, если путь некорректный
+            }
+        }
+
         //выход
         if (input == "\\q") {
             std::cout << "Exiting...\n";
