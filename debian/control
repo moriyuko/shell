@@ -1,8 +1,12 @@
 Source: kubsh
 Section: utils
 Priority: optional
-Build-Depends: g++
+Build-Depends: g++, debhelper
+Maintainer: Angelika Nikolaidi <angelika.nikolaidi@gmail.com>
+Standards-Version: 4.5.0
+
 Package: kubsh
 Architecture: amd64
-Depends: libc6
+Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: Мини-шелл для учебного задания по OS
+ Простой шелл для выполнения команд и управления пользователями.
