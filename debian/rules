@@ -1,0 +1,11 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	g++ -std=c++17 src/main.cpp -o kubsh
+
+override_dh_auto_install:
+	mkdir -p debian/kubsh/usr/bin
+	cp kubsh debian/kubsh/usr/bin/kubsh
