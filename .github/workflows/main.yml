@@ -29,12 +29,22 @@ jobs:
         run: |
           docker pull tyvik/kubsh_test:master
           
-          DEB_FILE=$(ls ./*.deb | head -n 1)
+          # dpkg-buildpackage создает .deb файл в родительской директории
+          DEB_FILE=$(ls ../*.deb 2>/dev/null | head -n 1 || ls ./*.deb 2>/dev/null | head -n 1)
+          
+          if [ -z "$DEB_FILE" ]; then
+            echo "Error: .deb file not found"
+            exit 1
+          fi
+          
+          # Копируем .deb файл в текущую директорию для удобства
+          cp "$DEB_FILE" ./
+          DEB_FILE="./$(basename "$DEB_FILE")"
           
           docker run --rm -v "$PWD":/app tyvik/kubsh_test:master \
             bash -c "
               set -e
               cd /app
-              sudo dpkg -i $DEB_FILE || sudo apt-get -f install -y
+              dpkg -i $DEB_FILE || apt-get -f install -y
               ./run_tests_inside_container.sh
             "
