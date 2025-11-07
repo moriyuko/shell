@@ -332,7 +332,6 @@ int main() {
   signal(SIGHUP, handle_sighup);
 
   // Инициализируем inotify для отслеживания создания каталогов
-  const char* homeEnv = getenv("HOME");
   std::string usersPath;
   struct stat optStat;
   if (stat("/opt/users", &optStat) == 0 && S_ISDIR(optStat.st_mode)) {
