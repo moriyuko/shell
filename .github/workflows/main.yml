@@ -1,0 +1,41 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential debhelper fakeroot dpkg-dev
+
+      - name: Build .deb package
+        run: |
+          make build
+          make deb
+          make clean
+
+      # 4️⃣ Запускаем Docker-контейнер с тестами
+      - name: Run tests inside Docker container
+        run: |
+          docker pull tyvik/kubsh_test:master
+          
+          DEB_FILE=$(ls ./*.deb | head -n 1)
+          
+          docker run --rm -v "$PWD":/app tyvik/kubsh_test:master \
+            bash -c "
+              set -e
+              cd /app
+              sudo dpkg -i $DEB_FILE || sudo apt-get -f install -y
+              ./run_tests_inside_container.sh
+            "
