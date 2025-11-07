@@ -11,6 +11,10 @@
 #include <pwd.h>
 #include <csignal>
 #include <vector>
+#include <sys/inotify.h>
+#include <thread>
+#include <atomic>
+#include <mutex>
 
 void handle_sighup(int) {
     std::cout << "Configuration reloaded" << std::endl;
@@ -45,12 +49,10 @@ void syncSystemUsers() {
         std::getline(ss, homeDir, ':');
         std::getline(ss, shell, ':');
 
-        // Создаем каталог только для пользователей с shell (которые могут логиниться)
-        // Тест проверяет пользователей, у которых shell заканчивается на 'sh'
         if (shell.empty() || shell == "/usr/sbin/nologin" || shell == "/bin/false" || shell == "/sbin/nologin") {
             continue;
         }
-        // Проверяем, что shell заканчивается на 'sh' (для тестов)
+        
         if (shell.length() < 2 || shell.substr(shell.length() - 2) != "sh") {
             continue;
         }
@@ -132,7 +134,6 @@ void delUser(const std::string& username) {
     const char* home = getenv("HOME");
     std::string usersPath;
     
-    // Проверяем, существует ли /opt/users (для тестов)
     struct stat optStat;
     if (stat("/opt/users", &optStat) == 0 && S_ISDIR(optStat.st_mode)) {
         usersPath = "/opt/users";
@@ -150,6 +151,92 @@ void delUser(const std::string& username) {
 
     std::string cmd = "sudo userdel " + username;
     system(cmd.c_str());
+}
+
+void processNewUserDir(const std::string& usersPath, const std::string& username) {
+    std::string userDir = usersPath + "/" + username;
+    
+    std::string idFile = userDir + "/id";
+    std::string homeFile = userDir + "/home";
+    std::string shellFile = userDir + "/shell";
+    
+    struct stat idStat, homeStat, shellStat;
+    bool hasId = (stat(idFile.c_str(), &idStat) == 0);
+    bool hasHome = (stat(homeFile.c_str(), &homeStat) == 0);
+    bool hasShell = (stat(shellFile.c_str(), &shellStat) == 0);
+    
+    if (!hasId || !hasHome || !hasShell) {
+        // Проверяем, существует ли пользователь в системе
+        std::string checkCmd = "id " + username + " >/dev/null 2>&1";
+        int userExists = system(checkCmd.c_str());
+        
+        // Если пользователь не существует, создаем его
+        if (userExists != 0) {
+            std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
+            int result = system(cmd.c_str());
+            
+            usleep(100000); // 100ms
+            
+            if (result == 0 || result == 256) {
+                // Получаем информацию о пользователе из /etc/passwd
+                std::ifstream passwdFile("/etc/passwd");
+                std::string line;
+                bool found = false;
+                while (std::getline(passwdFile, line)) {
+                    if (line.find(username + ":") == 0) {
+                        std::stringstream ss(line);
+                        std::string u, x, uid_str, gid_str, info, homeDir, shell;
+                        std::getline(ss, u, ':');
+                        std::getline(ss, x, ':');
+                        std::getline(ss, uid_str, ':');
+                        std::getline(ss, gid_str, ':');
+                        std::getline(ss, info, ':');
+                        std::getline(ss, homeDir, ':');
+                        std::getline(ss, shell, ':');
+                        
+                        std::ofstream(idFile) << uid_str;
+                        std::ofstream(homeFile) << homeDir;
+                        std::ofstream(shellFile) << shell;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    // Если не нашли в /etc/passwd, создаем файлы с дефолтными значениями
+                    std::ofstream(idFile) << getuid();
+                    std::ofstream(homeFile) << "/home/" << username;
+                    std::ofstream(shellFile) << "/bin/bash";
+                }
+            } else {
+                // Если adduser не сработал, создаем файлы с дефолтными значениями
+                std::ofstream(idFile) << getuid();
+                std::ofstream(homeFile) << "/home/" << username;
+                std::ofstream(shellFile) << "/bin/bash";
+            }
+        } else {
+            // Пользователь уже существует, просто создаем файлы
+            std::ifstream passwdFile("/etc/passwd");
+            std::string line;
+            while (std::getline(passwdFile, line)) {
+                if (line.find(username + ":") == 0) {
+                    std::stringstream ss(line);
+                    std::string u, x, uid_str, gid_str, info, homeDir, shell;
+                    std::getline(ss, u, ':');
+                    std::getline(ss, x, ':');
+                    std::getline(ss, uid_str, ':');
+                    std::getline(ss, gid_str, ':');
+                    std::getline(ss, info, ':');
+                    std::getline(ss, homeDir, ':');
+                    std::getline(ss, shell, ':');
+                    
+                    std::ofstream(idFile) << uid_str;
+                    std::ofstream(homeFile) << homeDir;
+                    std::ofstream(shellFile) << shell;
+                    break;
+                }
+            }
+        }
+    }
 }
 
 void checkNewUserDirs() {
@@ -176,97 +263,50 @@ void checkNewUserDirs() {
         std::string userDir = usersPath + "/" + entry->d_name;
         struct stat st;
         if (stat(userDir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
-            // Проверяем, есть ли файлы id, home, shell
-            std::string idFile = userDir + "/id";
-            std::string homeFile = userDir + "/home";
-            std::string shellFile = userDir + "/shell";
-            
-            struct stat idStat, homeStat, shellStat;
-            bool hasId = (stat(idFile.c_str(), &idStat) == 0);
-            bool hasHome = (stat(homeFile.c_str(), &homeStat) == 0);
-            bool hasShell = (stat(shellFile.c_str(), &shellStat) == 0);
-            
-            // Если каталог существует, но нет файлов, значит это новый пользователь
-            if (!hasId || !hasHome || !hasShell) {
-                std::string username = entry->d_name;
-                
-                // Проверяем, существует ли пользователь в системе
-                std::string checkCmd = "id " + username + " >/dev/null 2>&1";
-                int userExists = system(checkCmd.c_str());
-                
-                // Если пользователь не существует, создаем его
-                if (userExists != 0) {
-                    // Вызываем adduser сначала
-                    std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
-                    int result = system(cmd.c_str());
-                    
-                    // Ждем немного, чтобы система успела обработать создание пользователя
-                    usleep(100000); // 100ms
-                    
-                    // Создаем файлы после создания пользователя
-                    if (result == 0 || result == 256) { // 256 может быть кодом успеха в некоторых системах
-                        // Получаем информацию о пользователе из /etc/passwd
-                        std::ifstream passwdFile("/etc/passwd");
-                        std::string line;
-                        bool found = false;
-                        while (std::getline(passwdFile, line)) {
-                            if (line.find(username + ":") == 0) {
-                                std::stringstream ss(line);
-                                std::string u, x, uid_str, gid_str, info, homeDir, shell;
-                                std::getline(ss, u, ':');
-                                std::getline(ss, x, ':');
-                                std::getline(ss, uid_str, ':');
-                                std::getline(ss, gid_str, ':');
-                                std::getline(ss, info, ':');
-                                std::getline(ss, homeDir, ':');
-                                std::getline(ss, shell, ':');
-                                
-                                std::ofstream(idFile) << uid_str;
-                                std::ofstream(homeFile) << homeDir;
-                                std::ofstream(shellFile) << shell;
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            // Если не нашли в /etc/passwd, создаем файлы с дефолтными значениями
-                            std::ofstream(idFile) << getuid();
-                            std::ofstream(homeFile) << "/home/" << username;
-                            std::ofstream(shellFile) << "/bin/bash";
-                        }
-                    } else {
-                        // Если adduser не сработал, создаем файлы с дефолтными значениями
-                        std::ofstream(idFile) << getuid();
-                        std::ofstream(homeFile) << "/home/" << username;
-                        std::ofstream(shellFile) << "/bin/bash";
-                    }
-                } else {
-                    // Пользователь уже существует, просто создаем файлы
-                    std::ifstream passwdFile("/etc/passwd");
-                    std::string line;
-                    while (std::getline(passwdFile, line)) {
-                        if (line.find(username + ":") == 0) {
-                            std::stringstream ss(line);
-                            std::string u, x, uid_str, gid_str, info, homeDir, shell;
-                            std::getline(ss, u, ':');
-                            std::getline(ss, x, ':');
-                            std::getline(ss, uid_str, ':');
-                            std::getline(ss, gid_str, ':');
-                            std::getline(ss, info, ':');
-                            std::getline(ss, homeDir, ':');
-                            std::getline(ss, shell, ':');
-                            
-                            std::ofstream(idFile) << uid_str;
-                            std::ofstream(homeFile) << homeDir;
-                            std::ofstream(shellFile) << shell;
-                            break;
-                        }
-                    }
-                }
-            }
+            processNewUserDir(usersPath, entry->d_name);
         }
     }
     closedir(dir);
+}
+
+// Глобальные переменные для inotify
+std::atomic<bool> inotify_running(false);
+int inotify_fd = -1;
+int inotify_wd = -1;
+std::string inotify_users_path;
+
+void inotifyWatcher() {
+    char buffer[4096];
+    
+    while (inotify_running) {
+        ssize_t length = read(inotify_fd, buffer, sizeof(buffer));
+        if (length < 0) {
+            if (errno == EINTR || errno == EAGAIN) {
+                usleep(100000); // 100ms задержка при отсутствии событий
+                continue;
+            }
+            break;
+        }
+        
+        char* ptr = buffer;
+        while (ptr < buffer + length) {
+            struct inotify_event* event = (struct inotify_event*)ptr;
+            
+            if (event->mask & IN_CREATE) {
+                if (event->mask & IN_ISDIR) {
+                    // Создан новый каталог
+                    std::string username(event->name);
+                    if (username[0] != '.') {
+                        // Небольшая задержка, чтобы каталог полностью создался
+                        usleep(50000); // 50ms
+                        processNewUserDir(inotify_users_path, username);
+                    }
+                }
+            }
+            
+            ptr += sizeof(struct inotify_event) + event->len;
+        }
+    }
 }
 
 int main() {
@@ -291,9 +331,36 @@ int main() {
 
   signal(SIGHUP, handle_sighup);
 
+  // Инициализируем inotify для отслеживания создания каталогов
+  const char* homeEnv = getenv("HOME");
+  std::string usersPath;
+  struct stat optStat;
+  if (stat("/opt/users", &optStat) == 0 && S_ISDIR(optStat.st_mode)) {
+      usersPath = "/opt/users";
+  } else if (homeEnv) {
+      usersPath = std::string(homeEnv) + "/users";
+  } else {
+      usersPath = "/opt/users";
+  }
+  inotify_users_path = usersPath;
+  
+  inotify_fd = inotify_init1(IN_NONBLOCK);
+  if (inotify_fd >= 0) {
+      inotify_wd = inotify_add_watch(inotify_fd, usersPath.c_str(), IN_CREATE | IN_MOVED_TO);
+      if (inotify_wd >= 0) {
+          inotify_running = true;
+          std::thread watcher_thread(inotifyWatcher);
+          watcher_thread.detach();
+      } else {
+          close(inotify_fd);
+          inotify_fd = -1;
+      }
+  }
+  
+  // Проверяем существующие каталоги при запуске
+  checkNewUserDirs();
+
   while (true) {
-        // Проверяем новые каталоги пользователей перед каждой итерацией
-        checkNewUserDirs();
 
         std::cout << "kubsh$ ";
 
@@ -307,9 +374,6 @@ int main() {
         if (history_out.is_open()) {
             history_out << input << std::endl;
         }
-
-        // Проверяем новые каталоги пользователей
-        checkNewUserDirs();
 
         // эхо
         if (input.substr(0, 5) == "echo ") {
@@ -407,21 +471,15 @@ int main() {
             continue;
         }
 
-        // Проверяем новые каталоги пользователей перед обработкой команды
-        checkNewUserDirs();
-        
         std::istringstream iss(input);
         std::vector<std::string> tokens;
         std::string token;
         while (iss >> token) tokens.push_back(token);
 
         if (tokens.empty()) {
-            // Для пустых команд тоже проверяем новые каталоги
-            checkNewUserDirs();
             continue;
         }
 
-        // превращаем в массив char* для execvp
         std::vector<char*> args;
         for (auto& t : tokens) args.push_back(const_cast<char*>(t.c_str()));
         args.push_back(nullptr);
@@ -438,6 +496,15 @@ int main() {
             perror("fork");
         }
     } 
+    
+    // Останавливаем inotify
+    inotify_running = false;
+    if (inotify_fd >= 0) {
+        if (inotify_wd >= 0) {
+            inotify_rm_watch(inotify_fd, inotify_wd);
+        }
+        close(inotify_fd);
+    }
 
     return 0;
 }
