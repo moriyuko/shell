@@ -18,6 +18,10 @@ void handle_sighup(int) {
 
 void syncSystemUsers() {
     const char* home = getenv("HOME");
+    if (!home) {
+        // Если HOME не установлен, используем /opt как fallback для тестов
+        home = "/opt";
+    }
     std::string usersPath = std::string(home) + "/users";
 
     std::ifstream passwdFile("/etc/passwd");
@@ -66,6 +70,10 @@ void syncSystemUsers() {
 
 void createUsersDir() {
     const char* home = getenv("HOME");
+    if (!home) {
+        // Если HOME не установлен, используем /opt как fallback для тестов
+        home = "/opt";
+    }
     std::string usersPath = std::string(home) + "/users";
 
     struct stat st = {0};
@@ -78,6 +86,9 @@ void createUsersDir() {
 
 void addUser(const std::string& username) {
     const char* home = getenv("HOME");
+    if (!home) {
+        home = "/opt"; // fallback для тестов
+    }
     std::string userDir = std::string(home) + "/users/" + username;
 
     if (mkdir(userDir.c_str(), 0755) == 0) {
@@ -94,6 +105,9 @@ void addUser(const std::string& username) {
 
 void delUser(const std::string& username) {
     const char* home = getenv("HOME");
+    if (!home) {
+        home = "/opt"; // fallback для тестов
+    }
     std::string userDir = std::string(home) + "/users/" + username;
 
     unlink((userDir + "/id").c_str());
@@ -107,6 +121,10 @@ void delUser(const std::string& username) {
 
 void checkNewUserDirs() {
     const char* home = getenv("HOME");
+    if (!home) {
+        // Если HOME не установлен, используем /opt как fallback для тестов
+        home = "/opt";
+    }
     std::string usersPath = std::string(home) + "/users";
     
     DIR* dir = opendir(usersPath.c_str());
@@ -151,7 +169,11 @@ int main() {
 
   std::string input;
   
-  std::string home = getenv("HOME"); //переменная окружения для поиска домашнего каталога
+  const char* homeEnv = getenv("HOME");
+  if (!homeEnv) {
+    homeEnv = "/opt"; // fallback для тестов
+  }
+  std::string home = homeEnv; //переменная окружения для поиска домашнего каталога
   std::string history_file = home + "/.kubsh_history";
 
   std::ofstream history_out(history_file, std::ios::app);
@@ -203,7 +225,7 @@ int main() {
             } else if (debugArg.length() >= 2 && debugArg[0] == '"' && debugArg[debugArg.length()-1] == '"') {
                 debugArg = debugArg.substr(1, debugArg.length()-2);
             }
-            std::cout << debugArg << std::endl;
+            std::cout << std::endl << debugArg << std::endl;
             continue;
         }
 
