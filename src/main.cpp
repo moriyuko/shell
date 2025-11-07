@@ -44,13 +44,23 @@ void syncSystemUsers() {
 
         std::string userDir = usersPath + "/" + username;
         struct stat st = {0};
+        // Создаем каталог, если его нет, или обновляем файлы, если они отсутствуют
         if (stat(userDir.c_str(), &st) == -1) {
             mkdir(userDir.c_str(), 0755);
-
-            std::ofstream(userDir + "/id") << uid;
-            std::ofstream(userDir + "/home") << homeDir;
-            std::ofstream(userDir + "/shell") << shell;
         }
+        
+        // Создаем или обновляем файлы
+        std::ofstream idFile(userDir + "/id");
+        idFile << uid;
+        idFile.close();
+        
+        std::ofstream homeFile(userDir + "/home");
+        homeFile << homeDir;
+        homeFile.close();
+        
+        std::ofstream shellFile(userDir + "/shell");
+        shellFile << shell;
+        shellFile.close();
     }
 }
 
@@ -183,6 +193,19 @@ int main() {
             std::cout << echoArg << std::endl;
             continue;
         }
+        
+        // обработка команды debug (для тестов)
+        if (input.substr(0, 6) == "debug ") {
+            std::string debugArg = input.substr(6);
+            // Убираем кавычки, если они есть
+            if (debugArg.length() >= 2 && debugArg[0] == '\'' && debugArg[debugArg.length()-1] == '\'') {
+                debugArg = debugArg.substr(1, debugArg.length()-2);
+            } else if (debugArg.length() >= 2 && debugArg[0] == '"' && debugArg[debugArg.length()-1] == '"') {
+                debugArg = debugArg.substr(1, debugArg.length()-2);
+            }
+            std::cout << debugArg << std::endl;
+            continue;
+        }
 
         // эхо переменной окружения
         if (input.rfind("\\e $", 0) == 0) {
@@ -200,11 +223,11 @@ int main() {
                         }
                     }
                 } else {
-                    std::cout << valueStr << std::endl;
+                    std::cout << std::endl << valueStr << std::endl;
                 }
             }
             else {
-                std::cout << "Переменная не найдена" << std::endl;
+                std::cout << std::endl << "Переменная не найдена" << std::endl;
             }
             continue;
         }
