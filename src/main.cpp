@@ -189,14 +189,69 @@ void checkNewUserDirs() {
             // Если каталог существует, но нет файлов, значит это новый пользователь
             if (!hasId || !hasHome || !hasShell) {
                 std::string username = entry->d_name;
-                // Создаем файлы и вызываем adduser
-                std::ofstream(idFile) << getuid();
-                std::ofstream(homeFile) << "/home/" << username;
-                std::ofstream(shellFile) << "/bin/bash";
                 
-                // Вызываем adduser только если пользователь еще не существует
-                std::string cmd = "id " + username + " >/dev/null 2>&1 || sudo adduser --disabled-password --gecos \"\" " + username;
-                system(cmd.c_str());
+                // Проверяем, существует ли пользователь в системе
+                std::string checkCmd = "id " + username + " >/dev/null 2>&1";
+                int userExists = system(checkCmd.c_str());
+                
+                // Если пользователь не существует, создаем его
+                if (userExists != 0) {
+                    // Вызываем adduser сначала
+                    std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
+                    int result = system(cmd.c_str());
+                    
+                    // Создаем файлы после создания пользователя
+                    if (result == 0) {
+                        // Получаем информацию о пользователе из /etc/passwd
+                        std::ifstream passwdFile("/etc/passwd");
+                        std::string line;
+                        while (std::getline(passwdFile, line)) {
+                            if (line.find(username + ":") == 0) {
+                                std::stringstream ss(line);
+                                std::string u, x, uid_str, gid_str, info, homeDir, shell;
+                                std::getline(ss, u, ':');
+                                std::getline(ss, x, ':');
+                                std::getline(ss, uid_str, ':');
+                                std::getline(ss, gid_str, ':');
+                                std::getline(ss, info, ':');
+                                std::getline(ss, homeDir, ':');
+                                std::getline(ss, shell, ':');
+                                
+                                std::ofstream(idFile) << uid_str;
+                                std::ofstream(homeFile) << homeDir;
+                                std::ofstream(shellFile) << shell;
+                                break;
+                            }
+                        }
+                    } else {
+                        // Если adduser не сработал, создаем файлы с дефолтными значениями
+                        std::ofstream(idFile) << getuid();
+                        std::ofstream(homeFile) << "/home/" << username;
+                        std::ofstream(shellFile) << "/bin/bash";
+                    }
+                } else {
+                    // Пользователь уже существует, просто создаем файлы
+                    std::ifstream passwdFile("/etc/passwd");
+                    std::string line;
+                    while (std::getline(passwdFile, line)) {
+                        if (line.find(username + ":") == 0) {
+                            std::stringstream ss(line);
+                            std::string u, x, uid_str, gid_str, info, homeDir, shell;
+                            std::getline(ss, u, ':');
+                            std::getline(ss, x, ':');
+                            std::getline(ss, uid_str, ':');
+                            std::getline(ss, gid_str, ':');
+                            std::getline(ss, info, ':');
+                            std::getline(ss, homeDir, ':');
+                            std::getline(ss, shell, ':');
+                            
+                            std::ofstream(idFile) << uid_str;
+                            std::ofstream(homeFile) << homeDir;
+                            std::ofstream(shellFile) << shell;
+                            break;
+                        }
+                    }
+                }
             }
         }
     }
