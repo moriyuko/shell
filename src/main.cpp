@@ -50,8 +50,6 @@ void syncSystemUsers() {
             std::ofstream(userDir + "/shell") << shell;
         }
     }
-
-    std::cout << "Каталоги пользователей синхронизированы с системой." << std::endl;
 }
 
 void createUsersDir() {
@@ -61,7 +59,6 @@ void createUsersDir() {
     struct stat st = {0};
     if (stat(usersPath.c_str(), &st) == -1) {
         mkdir(usersPath.c_str(), 0755);
-        std::cout << "Создан каталог " << usersPath << std::endl;
     }
 
     syncSystemUsers();
