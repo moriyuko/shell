@@ -1,0 +1,8 @@
+Source: kubsh
+Section: utils
+Priority: optional
+Build-Depends: g++
+Package: kubsh
+Architecture: amd64
+Depends: libc6
+Description: Мини-шелл для учебного задания по OS
