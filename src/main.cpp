@@ -35,10 +35,12 @@ void syncSystemUsers() {
         std::getline(ss, homeDir, ':');
         std::getline(ss, shell, ':');
 
-        int uid = std::stoi(uid_str);
+        // Создаем каталог только для пользователей с shell (которые могут логиниться)
+        if (shell.empty() || shell == "/usr/sbin/nologin" || shell == "/bin/false" || shell == "/sbin/nologin") {
+            continue;
+        }
 
-        // фильтруем системных пользователей
-        if (uid < 1000) continue;
+        int uid = std::stoi(uid_str);
 
         std::string userDir = usersPath + "/" + username;
         struct stat st = {0};
@@ -93,6 +95,46 @@ void delUser(const std::string& username) {
     system(cmd.c_str());
 }
 
+void checkNewUserDirs() {
+    const char* home = getenv("HOME");
+    std::string usersPath = std::string(home) + "/users";
+    
+    DIR* dir = opendir(usersPath.c_str());
+    if (!dir) return;
+    
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        if (entry->d_name[0] == '.') continue;
+        
+        std::string userDir = usersPath + "/" + entry->d_name;
+        struct stat st;
+        if (stat(userDir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+            // Проверяем, есть ли файлы id, home, shell
+            std::string idFile = userDir + "/id";
+            std::string homeFile = userDir + "/home";
+            std::string shellFile = userDir + "/shell";
+            
+            struct stat idStat, homeStat, shellStat;
+            bool hasId = (stat(idFile.c_str(), &idStat) == 0);
+            bool hasHome = (stat(homeFile.c_str(), &homeStat) == 0);
+            bool hasShell = (stat(shellFile.c_str(), &shellStat) == 0);
+            
+            // Если каталог существует, но нет файлов, значит это новый пользователь
+            if (!hasId || !hasHome || !hasShell) {
+                std::string username = entry->d_name;
+                // Создаем файлы и вызываем adduser
+                std::ofstream(idFile) << getuid();
+                std::ofstream(homeFile) << "/home/" << username;
+                std::ofstream(shellFile) << "/bin/bash";
+                
+                std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username;
+                system(cmd.c_str());
+            }
+        }
+    }
+    closedir(dir);
+}
+
 int main() {
   std::cout << std::unitbuf;
   std::cerr << std::unitbuf;
@@ -126,10 +168,20 @@ int main() {
             history_out << input << std::endl;
         }
 
+        // Проверяем новые каталоги пользователей
+        checkNewUserDirs();
+
         // эхо
         if (input.substr(0, 5) == "echo ") {
-            std::cout << input.substr(5) << std::endl;
-            continue; //добавила, чтоб не было вывода ": command not found"
+            std::string echoArg = input.substr(5);
+            // Убираем кавычки, если они есть
+            if (echoArg.length() >= 2 && echoArg[0] == '\'' && echoArg[echoArg.length()-1] == '\'') {
+                echoArg = echoArg.substr(1, echoArg.length()-2);
+            } else if (echoArg.length() >= 2 && echoArg[0] == '"' && echoArg[echoArg.length()-1] == '"') {
+                echoArg = echoArg.substr(1, echoArg.length()-2);
+            }
+            std::cout << echoArg << std::endl;
+            continue;
         }
 
         // эхо переменной окружения
@@ -137,7 +189,19 @@ int main() {
             std::string var = input.substr(4);
             const char* value = std::getenv(var.c_str());
             if (value) {
-                std::cout << value << std::endl;
+                std::string valueStr(value);
+                // Если переменная PATH, выводим каждый путь на отдельной строке
+                if (var == "PATH" && valueStr.find(':') != std::string::npos) {
+                    std::istringstream pathStream(valueStr);
+                    std::string pathItem;
+                    while (std::getline(pathStream, pathItem, ':')) {
+                        if (!pathItem.empty()) {
+                            std::cout << pathItem << std::endl;
+                        }
+                    }
+                } else {
+                    std::cout << valueStr << std::endl;
+                }
             }
             else {
                 std::cout << "Переменная не найдена" << std::endl;
@@ -205,7 +269,7 @@ int main() {
         pid_t pid = fork();
         if (pid == 0) {
             execvp(args[0], args.data()); // ищет в $PATH и запускает
-            std::cerr << args[0] << ": command not found" << std::endl;
+            std::cout << args[0] << ": command not found" << std::endl;
             exit(1);
         } else if (pid > 0) {
             int status;
