@@ -16,7 +16,7 @@ run: build
 	./$(BIN)
 
 # Сборка deb-пакета
-deb:
+deb: build
 	dpkg-buildpackage -us -uc
 
 # Очистка собранного бинарника

@@ -21,7 +21,6 @@ jobs:
 
       - name: Build .deb package
         run: |
-          make build
           make deb
           make clean
 
