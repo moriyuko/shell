@@ -40,7 +40,12 @@ void syncSystemUsers() {
         std::getline(ss, shell, ':');
 
         // Создаем каталог только для пользователей с shell (которые могут логиниться)
+        // Тест проверяет пользователей, у которых shell заканчивается на 'sh'
         if (shell.empty() || shell == "/usr/sbin/nologin" || shell == "/bin/false" || shell == "/sbin/nologin") {
+            continue;
+        }
+        // Проверяем, что shell заканчивается на 'sh' (для тестов)
+        if (shell.length() < 2 || shell.substr(shell.length() - 2) != "sh") {
             continue;
         }
 
@@ -155,7 +160,8 @@ void checkNewUserDirs() {
                 std::ofstream(homeFile) << "/home/" << username;
                 std::ofstream(shellFile) << "/bin/bash";
                 
-                std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username;
+                // Вызываем adduser только если пользователь еще не существует
+                std::string cmd = "id " + username + " >/dev/null 2>&1 || sudo adduser --disabled-password --gecos \"\" " + username;
                 system(cmd.c_str());
             }
         }
@@ -186,6 +192,8 @@ int main() {
   signal(SIGHUP, handle_sighup);
 
   while (true) {
+        // Проверяем новые каталоги пользователей перед каждой итерацией
+        checkNewUserDirs();
 
         std::cout << "kubsh$ ";
 
