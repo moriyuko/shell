@@ -175,7 +175,14 @@ void processNewUserDir(const std::string& usersPath, const std::string& username
             std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
             int result = system(cmd.c_str());
             
-            usleep(100000); // 100ms
+            usleep(200000); // 200ms
+            
+            int checkResult = system(("id " + username + " >/dev/null 2>&1").c_str());
+            if (checkResult != 0 && (result == 0 || result == 256)) {
+                // Если пользователь все еще не существует, пробуем еще раз
+                system(cmd.c_str());
+                usleep(200000);
+            }
             
             if (result == 0 || result == 256) {
                 // Получаем информацию о пользователе из /etc/passwd
@@ -282,23 +289,28 @@ void inotifyWatcher() {
         ssize_t length = read(inotify_fd, buffer, sizeof(buffer));
         if (length < 0) {
             if (errno == EINTR || errno == EAGAIN) {
-                usleep(100000); // 100ms задержка при отсутствии событий
+                usleep(50000); // 50ms задержка при отсутствии событий
                 continue;
             }
             break;
+        }
+        
+        if (length == 0) {
+            usleep(50000);
+            continue;
         }
         
         char* ptr = buffer;
         while (ptr < buffer + length) {
             struct inotify_event* event = (struct inotify_event*)ptr;
             
-            if (event->mask & IN_CREATE) {
+            if (event->mask & (IN_CREATE | IN_MOVED_TO)) {
                 if (event->mask & IN_ISDIR) {
                     // Создан новый каталог
                     std::string username(event->name);
-                    if (username[0] != '.') {
+                    if (username.length() > 0 && username[0] != '.') {
                         // Небольшая задержка, чтобы каталог полностью создался
-                        usleep(50000); // 50ms
+                        usleep(100000); // 100ms
                         processNewUserDir(inotify_users_path, username);
                     }
                 }
@@ -358,8 +370,13 @@ int main() {
   
   // Проверяем существующие каталоги при запуске
   checkNewUserDirs();
+  
+  // Небольшая задержка, чтобы inotify успел инициализироваться
+  usleep(100000); // 100ms
 
   while (true) {
+        // Периодически проверяем новые каталоги (на случай, если inotify пропустил)
+        checkNewUserDirs();
 
         std::cout << "kubsh$ ";
 
