@@ -196,15 +196,19 @@ void checkNewUserDirs() {
                 
                 // Если пользователь не существует, создаем его
                 if (userExists != 0) {
-                    // Вызываем adduser сначала (без перенаправления вывода для отладки)
-                    std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username + " 2>&1";
+                    // Вызываем adduser сначала
+                    std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
                     int result = system(cmd.c_str());
                     
+                    // Ждем немного, чтобы система успела обработать создание пользователя
+                    usleep(100000); // 100ms
+                    
                     // Создаем файлы после создания пользователя
-                    if (result == 0) {
+                    if (result == 0 || result == 256) { // 256 может быть кодом успеха в некоторых системах
                         // Получаем информацию о пользователе из /etc/passwd
                         std::ifstream passwdFile("/etc/passwd");
                         std::string line;
+                        bool found = false;
                         while (std::getline(passwdFile, line)) {
                             if (line.find(username + ":") == 0) {
                                 std::stringstream ss(line);
@@ -220,8 +224,15 @@ void checkNewUserDirs() {
                                 std::ofstream(idFile) << uid_str;
                                 std::ofstream(homeFile) << homeDir;
                                 std::ofstream(shellFile) << shell;
+                                found = true;
                                 break;
                             }
+                        }
+                        if (!found) {
+                            // Если не нашли в /etc/passwd, создаем файлы с дефолтными значениями
+                            std::ofstream(idFile) << getuid();
+                            std::ofstream(homeFile) << "/home/" << username;
+                            std::ofstream(shellFile) << "/bin/bash";
                         }
                     } else {
                         // Если adduser не сработал, создаем файлы с дефолтными значениями
