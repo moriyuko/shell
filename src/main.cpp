@@ -196,8 +196,8 @@ void checkNewUserDirs() {
                 
                 // Если пользователь не существует, создаем его
                 if (userExists != 0) {
-                    // Вызываем adduser сначала
-                    std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
+                    // Вызываем adduser сначала (без перенаправления вывода для отладки)
+                    std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username + " 2>&1";
                     int result = system(cmd.c_str());
                     
                     // Создаем файлы после создания пользователя
@@ -396,12 +396,19 @@ int main() {
             continue;
         }
 
+        // Проверяем новые каталоги пользователей перед обработкой команды
+        checkNewUserDirs();
+        
         std::istringstream iss(input);
         std::vector<std::string> tokens;
         std::string token;
         while (iss >> token) tokens.push_back(token);
 
-        if (tokens.empty()) continue;
+        if (tokens.empty()) {
+            // Для пустых команд тоже проверяем новые каталоги
+            checkNewUserDirs();
+            continue;
+        }
 
         // превращаем в массив char* для execvp
         std::vector<char*> args;
