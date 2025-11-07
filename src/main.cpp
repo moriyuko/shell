@@ -18,11 +18,17 @@ void handle_sighup(int) {
 
 void syncSystemUsers() {
     const char* home = getenv("HOME");
-    if (!home) {
-        // Если HOME не установлен, используем /opt как fallback для тестов
-        home = "/opt";
+    std::string usersPath;
+    
+    // Проверяем, существует ли /opt/users (для тестов)
+    struct stat optStat;
+    if (stat("/opt/users", &optStat) == 0 && S_ISDIR(optStat.st_mode)) {
+        usersPath = "/opt/users";
+    } else if (home) {
+        usersPath = std::string(home) + "/users";
+    } else {
+        usersPath = "/opt/users";
     }
-    std::string usersPath = std::string(home) + "/users";
 
     std::ifstream passwdFile("/etc/passwd");
     std::string line;
@@ -75,11 +81,17 @@ void syncSystemUsers() {
 
 void createUsersDir() {
     const char* home = getenv("HOME");
-    if (!home) {
-        // Если HOME не установлен, используем /opt как fallback для тестов
-        home = "/opt";
+    std::string usersPath;
+    
+    // Проверяем, существует ли /opt/users (для тестов)
+    struct stat optStat;
+    if (stat("/opt/users", &optStat) == 0 && S_ISDIR(optStat.st_mode)) {
+        usersPath = "/opt/users";
+    } else if (home) {
+        usersPath = std::string(home) + "/users";
+    } else {
+        usersPath = "/opt/users";
     }
-    std::string usersPath = std::string(home) + "/users";
 
     struct stat st = {0};
     if (stat(usersPath.c_str(), &st) == -1) {
@@ -91,10 +103,18 @@ void createUsersDir() {
 
 void addUser(const std::string& username) {
     const char* home = getenv("HOME");
-    if (!home) {
-        home = "/opt"; // fallback для тестов
+    std::string usersPath;
+    
+    // Проверяем, существует ли /opt/users (для тестов)
+    struct stat optStat;
+    if (stat("/opt/users", &optStat) == 0 && S_ISDIR(optStat.st_mode)) {
+        usersPath = "/opt/users";
+    } else if (home) {
+        usersPath = std::string(home) + "/users";
+    } else {
+        usersPath = "/opt/users";
     }
-    std::string userDir = std::string(home) + "/users/" + username;
+    std::string userDir = usersPath + "/" + username;
 
     if (mkdir(userDir.c_str(), 0755) == 0) {
         std::ofstream(userDir + "/id") << getuid();
@@ -110,10 +130,18 @@ void addUser(const std::string& username) {
 
 void delUser(const std::string& username) {
     const char* home = getenv("HOME");
-    if (!home) {
-        home = "/opt"; // fallback для тестов
+    std::string usersPath;
+    
+    // Проверяем, существует ли /opt/users (для тестов)
+    struct stat optStat;
+    if (stat("/opt/users", &optStat) == 0 && S_ISDIR(optStat.st_mode)) {
+        usersPath = "/opt/users";
+    } else if (home) {
+        usersPath = std::string(home) + "/users";
+    } else {
+        usersPath = "/opt/users";
     }
-    std::string userDir = std::string(home) + "/users/" + username;
+    std::string userDir = usersPath + "/" + username;
 
     unlink((userDir + "/id").c_str());
     unlink((userDir + "/home").c_str());
@@ -126,11 +154,17 @@ void delUser(const std::string& username) {
 
 void checkNewUserDirs() {
     const char* home = getenv("HOME");
-    if (!home) {
-        // Если HOME не установлен, используем /opt как fallback для тестов
-        home = "/opt";
+    std::string usersPath;
+    
+    // Проверяем, существует ли /opt/users (для тестов)
+    struct stat optStat;
+    if (stat("/opt/users", &optStat) == 0 && S_ISDIR(optStat.st_mode)) {
+        usersPath = "/opt/users";
+    } else if (home) {
+        usersPath = std::string(home) + "/users";
+    } else {
+        usersPath = "/opt/users";
     }
-    std::string usersPath = std::string(home) + "/users";
     
     DIR* dir = opendir(usersPath.c_str());
     if (!dir) return;
