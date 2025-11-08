@@ -24,7 +24,6 @@ jobs:
           make deb
           make clean
 
-      # 4️⃣ Запускаем Docker-контейнер с тестами
       - name: Run tests inside Docker container
         run: |
           docker pull tyvik/kubsh_test:master
