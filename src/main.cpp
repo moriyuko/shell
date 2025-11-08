@@ -12,9 +12,7 @@
 #include <csignal>
 #include <vector>
 #include <sys/inotify.h>
-#include <thread>
-#include <atomic>
-#include <mutex>
+#include <cerrno>
 
 void handle_sighup(int) {
     std::cout << "Configuration reloaded" << std::endl;
@@ -86,7 +84,11 @@ void handle_new_user(const std::string& username) {
     
     if (userExists != 0) {
         std::string cmd = "adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
-        system(cmd.c_str());
+        int result = system(cmd.c_str());
+        // Небольшая задержка после создания пользователя, чтобы система успела обработать
+        if (result == 0) {
+            usleep(50000); // 50ms
+        }
     }
 }
 
@@ -98,7 +100,7 @@ void handle_deleted_user(const std::string& username) {
 
 // Отслеживание изменений
 void monitor_users_dir() {
-    int fd = inotify_init();
+    int fd = inotify_init1(IN_NONBLOCK);
     if (fd < 0) {
         perror("inotify_init");
         return;
@@ -114,7 +116,21 @@ void monitor_users_dir() {
     char buffer[1024];
     while (true) {
         int length = read(fd, buffer, sizeof(buffer));
-        if (length < 0) break;
+        if (length < 0) {
+            if (errno == EINTR) {
+                continue; // Перезапускаем read при прерывании
+            }
+            if (errno == EAGAIN) {
+                usleep(10000); // 10ms задержка при отсутствии событий (неблокирующий режим)
+                continue;
+            }
+            break; // Другая ошибка - выходим
+        }
+        
+        if (length == 0) {
+            usleep(10000); // 10ms задержка при отсутствии событий
+            continue;
+        }
 
         int i = 0;
         while (i < length) {
@@ -122,10 +138,10 @@ void monitor_users_dir() {
             if (event->len > 0) {
                 std::string name = event->name;
                 // Проверяем, что это директория и не начинается с точки
-                if (name[0] != '.') {
+                if (name.length() > 0 && name[0] != '.') {
                     if (event->mask & IN_CREATE && (event->mask & IN_ISDIR)) {
                         // Небольшая задержка, чтобы каталог полностью создался
-                        usleep(100000); // 100ms
+                        usleep(50000); // 50ms
                         handle_new_user(name);
                     } else if (event->mask & IN_DELETE && (event->mask & IN_ISDIR)) {
                         handle_deleted_user(name);
@@ -159,14 +175,21 @@ int main() {
 
   create_vfs();
 
+  signal(SIGHUP, handle_sighup);
+
     // Запускаем мониторинг в отдельном процессе
+    pid_t monitor_pid = -1;
     pid_t pid = fork();
     if (pid == 0) {
-        monitor_users_dir();  // дочерний процесс следит за изменениями (бесконечный цикл)
-        exit(0);  // Этот код никогда не выполнится, но оставляем для ясности
+        // Дочерний процесс - отслеживает изменения
+        monitor_users_dir();  // бесконечный цикл
+        exit(0);
+    } else if (pid > 0) {
+        monitor_pid = pid;
+    } else {
+        // Ошибка fork - продолжаем без мониторинга
+        perror("fork");
     }
-
-  signal(SIGHUP, handle_sighup);
 
   while (true) {
         std::cout << "kubsh$ ";
@@ -302,6 +325,13 @@ int main() {
         } else {
             perror("fork");
         }
-    } 
+    }
+    
+    // Убиваем дочерний процесс мониторинга перед выходом
+    if (monitor_pid > 0) {
+        kill(monitor_pid, SIGTERM);
+        waitpid(monitor_pid, nullptr, 0);
+    }
+    
     return 0;
 }
