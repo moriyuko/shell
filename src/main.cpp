@@ -123,7 +123,7 @@ void addUser(const std::string& username) {
         std::ofstream(userDir + "/home") << "/home/" << username;
         std::ofstream(userDir + "/shell") << "/bin/bash";
 
-        std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username;
+        std::string cmd = "adduser --disabled-password --gecos \"\" " + username;
         system(cmd.c_str());
     } else {
         std::cerr << "Ошибка: каталог уже существует или нет прав." << std::endl;
@@ -149,7 +149,7 @@ void delUser(const std::string& username) {
     unlink((userDir + "/shell").c_str());
     rmdir(userDir.c_str());
 
-    std::string cmd = "sudo userdel " + username;
+    std::string cmd = "userdel " + username;
     system(cmd.c_str());
 }
 
@@ -172,7 +172,7 @@ void processNewUserDir(const std::string& usersPath, const std::string& username
         
         // Если пользователь не существует, создаем его
         if (userExists != 0) {
-            std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
+            std::string cmd = "adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
             int result = system(cmd.c_str());
             
             usleep(200000); // 200ms
@@ -250,7 +250,7 @@ void checkNewUserDirs() {
     const char* home = getenv("HOME");
     std::string usersPath;
     
-    // Проверяем, существует ли /opt/users (для тестов)
+    // Проверяем, существует ли /opt/users
     struct stat optStat;
     if (stat("/opt/users", &optStat) == 0 && S_ISDIR(optStat.st_mode)) {
         usersPath = "/opt/users";
@@ -368,14 +368,11 @@ int main() {
       }
   }
   
-  // Проверяем существующие каталоги при запуске
   checkNewUserDirs();
   
-  // Небольшая задержка, чтобы inotify успел инициализироваться
   usleep(100000); // 100ms
 
   while (true) {
-        // Периодически проверяем новые каталоги (на случай, если inotify пропустил)
         checkNewUserDirs();
 
         std::cout << "kubsh$ ";
