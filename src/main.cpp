@@ -83,15 +83,14 @@ void handle_new_user(const std::string& username) {
     int userExists = system(checkCmd.c_str());
     
     if (userExists != 0) {
-        std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username;
+        std::string cmd = "sudo useradd -m -s /bin/bash " + username + " 2>&1";
         int result = system(cmd.c_str());
         
-        // Проверяем, что команда выполнилась успешно
-        if (result == 0) {
+        if (result == 0 || result == 2304) { // 2304 = код возврата 9 (пользователь уже существует)
             int verifyResult = system(checkCmd.c_str());
             int retries = 0;
-            while (verifyResult != 0 && retries < 50) {
-                usleep(20000); // 20ms между попытками
+            while (verifyResult != 0 && retries < 100) {
+                usleep(10000);
                 verifyResult = system(checkCmd.c_str());
                 retries++;
             }
@@ -101,15 +100,16 @@ void handle_new_user(const std::string& username) {
 
 // Удаление пользователя
 void handle_deleted_user(const std::string& username) {
-    std::string cmd = "sudo userdel " + username + " >/dev/null 2>&1";
+    std::string cmd = "sudo userdel -r " + username + " >/dev/null 2>&1";
     system(cmd.c_str());
 }
 
 // Отслеживание изменений
-void monitor_users_dir() {
+void monitor_users_dir(int sync_pipe) {
     int fd = inotify_init();
     if (fd < 0) {
         perror("inotify_init");
+        close(sync_pipe);
         return;
     }
 
@@ -117,8 +117,14 @@ void monitor_users_dir() {
     if (wd < 0) {
         perror("inotify_add_watch");
         close(fd);
+        close(sync_pipe);
         return;
     }
+
+    // сигнал, что мониторинг готов
+    char ready = '1';
+    write(sync_pipe, &ready, 1);
+    close(sync_pipe);
 
     char buffer[4096];
     while (true) {
@@ -176,16 +182,30 @@ int main() {
 
   signal(SIGHUP, handle_sighup);
 
-    // мониторинг в отдельном процессе
+    int sync_pipe[2];
+    if (pipe(sync_pipe) == -1) {
+        perror("pipe");
+        return 1;
+    }
+
+    // Запускаем мониторинг в отдельном процессе
     pid_t monitor_pid = -1;
     pid_t pid = fork();
     if (pid == 0) {
-        monitor_users_dir();  
+        close(sync_pipe[0]); 
+        monitor_users_dir(sync_pipe[1]);  
         exit(0);
     } else if (pid > 0) {
         monitor_pid = pid;
+        close(sync_pipe[1]); 
+        
+        char ready;
+        read(sync_pipe[0], &ready, 1);
+        close(sync_pipe[0]);
     } else {
         perror("fork");
+        close(sync_pipe[0]);
+        close(sync_pipe[1]);
     }
 
   while (true) {
