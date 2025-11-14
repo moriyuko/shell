@@ -59,7 +59,7 @@ void create_vfs() {
         std::string home = parts[5];
         std::string shell = parts[6];
 
-        // Создаем каталог только для пользователей с shell, заканчивающимся на 'sh'
+        // Создаем каталог только для пользователей с shell, заканчивающим на 'sh'
         if (shell.length() < 2 || shell.substr(shell.length() - 2) != "sh") {
             continue;
         }
@@ -83,21 +83,17 @@ void handle_new_user(const std::string& username) {
     int userExists = system(checkCmd.c_str());
     
     if (userExists != 0) {
-        std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
+        std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username;
         int result = system(cmd.c_str());
         
         // Проверяем, что команда выполнилась успешно
         if (result == 0) {
-            // Проверяем, что пользователь действительно появился в системе
             int verifyResult = system(checkCmd.c_str());
             int retries = 0;
-            while (verifyResult != 0 && retries < 20) {
-                usleep(50000); 
+            while (verifyResult != 0 && retries < 50) {
+                usleep(20000); // 20ms между попытками
                 verifyResult = system(checkCmd.c_str());
                 retries++;
-            }
-            if (verifyResult == 0) {
-                usleep(100000);
             }
         }
     }
@@ -111,7 +107,7 @@ void handle_deleted_user(const std::string& username) {
 
 // Отслеживание изменений
 void monitor_users_dir() {
-    int fd = inotify_init1(IN_NONBLOCK);
+    int fd = inotify_init();
     if (fd < 0) {
         perror("inotify_init");
         return;
@@ -124,22 +120,17 @@ void monitor_users_dir() {
         return;
     }
 
-    char buffer[1024];
+    char buffer[4096];
     while (true) {
         int length = read(fd, buffer, sizeof(buffer));
         if (length < 0) {
             if (errno == EINTR) {
                 continue; 
             }
-            if (errno == EAGAIN) {
-                usleep(5000); 
-                continue;
-            }
             break; 
         }
         
         if (length == 0) {
-            usleep(5000); 
             continue;
         }
 
@@ -185,7 +176,7 @@ int main() {
 
   signal(SIGHUP, handle_sighup);
 
-    // Запускаем мониторинг в отдельном процессе
+    // мониторинг в отдельном процессе
     pid_t monitor_pid = -1;
     pid_t pid = fork();
     if (pid == 0) {
