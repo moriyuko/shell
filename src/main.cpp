@@ -26,7 +26,9 @@ bool dir_exists(const char* path) {
 }
 
 void make_dir(const char* path) {
-    mkdir(path, 0755);
+    if (mkdir(path, 0755) != 0 && errno != EEXIST) {
+        perror("mkdir");
+    }
 }
 
 std::vector<std::string> split(const std::string& str, char delim) {
@@ -106,6 +108,11 @@ void handle_deleted_user(const std::string& username) {
 
 // Отслеживание изменений
 void monitor_users_dir(int sync_pipe) {
+    // Убеждаемся, что директория существует перед началом мониторинга
+    if (!dir_exists(USERS_DIR.c_str())) {
+        make_dir(USERS_DIR.c_str());
+    }
+    
     int fd = inotify_init();
     if (fd < 0) {
         perror("inotify_init");
@@ -116,6 +123,7 @@ void monitor_users_dir(int sync_pipe) {
     int wd = inotify_add_watch(fd, USERS_DIR.c_str(), IN_CREATE | IN_DELETE);
     if (wd < 0) {
         perror("inotify_add_watch");
+        std::cerr << "Failed to watch directory: " << USERS_DIR << std::endl;
         close(fd);
         close(sync_pipe);
         return;
