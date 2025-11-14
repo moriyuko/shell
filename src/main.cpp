@@ -83,18 +83,29 @@ void handle_new_user(const std::string& username) {
     int userExists = system(checkCmd.c_str());
     
     if (userExists != 0) {
-        std::string cmd = "adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
+        std::string cmd = "sudo adduser --disabled-password --gecos \"\" " + username + " >/dev/null 2>&1";
         int result = system(cmd.c_str());
-        // Небольшая задержка после создания пользователя, чтобы система успела обработать
+        
+        // Проверяем, что команда выполнилась успешно
         if (result == 0) {
-            usleep(50000); // 50ms
+            // Увеличиваем задержку и проверяем, что пользователь действительно создан
+            usleep(200000); // 200ms для надежности
+            
+            // Проверяем, что пользователь действительно появился в системе
+            int verifyResult = system(checkCmd.c_str());
+            int retries = 0;
+            while (verifyResult != 0 && retries < 5) {
+                usleep(100000); // 100ms между попытками
+                verifyResult = system(checkCmd.c_str());
+                retries++;
+            }
         }
     }
 }
 
 // Удаление пользователя
 void handle_deleted_user(const std::string& username) {
-    std::string cmd = "userdel " + username + " >/dev/null 2>&1";
+    std::string cmd = "sudo userdel " + username + " >/dev/null 2>&1";
     system(cmd.c_str());
 }
 
@@ -118,17 +129,17 @@ void monitor_users_dir() {
         int length = read(fd, buffer, sizeof(buffer));
         if (length < 0) {
             if (errno == EINTR) {
-                continue; // Перезапускаем read при прерывании
+                continue; 
             }
             if (errno == EAGAIN) {
-                usleep(10000); // 10ms задержка при отсутствии событий (неблокирующий режим)
+                usleep(10000); 
                 continue;
             }
-            break; // Другая ошибка - выходим
+            break; 
         }
         
         if (length == 0) {
-            usleep(10000); // 10ms задержка при отсутствии событий
+            usleep(10000); 
             continue;
         }
 
@@ -137,11 +148,9 @@ void monitor_users_dir() {
             struct inotify_event *event = (struct inotify_event *) &buffer[i];
             if (event->len > 0) {
                 std::string name = event->name;
-                // Проверяем, что это директория и не начинается с точки
                 if (name.length() > 0 && name[0] != '.') {
                     if (event->mask & IN_CREATE && (event->mask & IN_ISDIR)) {
-                        // Небольшая задержка, чтобы каталог полностью создался
-                        usleep(50000); // 50ms
+                        usleep(100000); 
                         handle_new_user(name);
                     } else if (event->mask & IN_DELETE && (event->mask & IN_ISDIR)) {
                         handle_deleted_user(name);
@@ -181,13 +190,11 @@ int main() {
     pid_t monitor_pid = -1;
     pid_t pid = fork();
     if (pid == 0) {
-        // Дочерний процесс - отслеживает изменения
-        monitor_users_dir();  // бесконечный цикл
+        monitor_users_dir();  
         exit(0);
     } else if (pid > 0) {
         monitor_pid = pid;
     } else {
-        // Ошибка fork - продолжаем без мониторинга
         perror("fork");
     }
 
@@ -327,7 +334,6 @@ int main() {
         }
     }
     
-    // Убиваем дочерний процесс мониторинга перед выходом
     if (monitor_pid > 0) {
         kill(monitor_pid, SIGTERM);
         waitpid(monitor_pid, nullptr, 0);
