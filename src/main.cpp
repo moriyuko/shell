@@ -88,16 +88,16 @@ void handle_new_user(const std::string& username) {
         
         // Проверяем, что команда выполнилась успешно
         if (result == 0) {
-            // Увеличиваем задержку и проверяем, что пользователь действительно создан
-            usleep(200000); // 200ms для надежности
-            
             // Проверяем, что пользователь действительно появился в системе
             int verifyResult = system(checkCmd.c_str());
             int retries = 0;
-            while (verifyResult != 0 && retries < 5) {
-                usleep(100000); // 100ms между попытками
+            while (verifyResult != 0 && retries < 20) {
+                usleep(50000); 
                 verifyResult = system(checkCmd.c_str());
                 retries++;
+            }
+            if (verifyResult == 0) {
+                usleep(100000);
             }
         }
     }
@@ -132,14 +132,14 @@ void monitor_users_dir() {
                 continue; 
             }
             if (errno == EAGAIN) {
-                usleep(10000); 
+                usleep(5000); 
                 continue;
             }
             break; 
         }
         
         if (length == 0) {
-            usleep(10000); 
+            usleep(5000); 
             continue;
         }
 
@@ -150,7 +150,6 @@ void monitor_users_dir() {
                 std::string name = event->name;
                 if (name.length() > 0 && name[0] != '.') {
                     if (event->mask & IN_CREATE && (event->mask & IN_ISDIR)) {
-                        usleep(100000); 
                         handle_new_user(name);
                     } else if (event->mask & IN_DELETE && (event->mask & IN_ISDIR)) {
                         handle_deleted_user(name);
