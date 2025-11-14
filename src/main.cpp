@@ -83,7 +83,7 @@ void handle_new_user(const std::string& username) {
     int userExists = system(checkCmd.c_str());
     
     if (userExists != 0) {
-        std::string cmd = "sudo useradd -m -s /bin/bash " + username + " 2>&1";
+        std::string cmd = "useradd -m -s /bin/bash " + username + " 2>&1";
         int result = system(cmd.c_str());
         
         if (result == 0 || result == 2304) { // 2304 = код возврата 9 (пользователь уже существует)
@@ -100,7 +100,7 @@ void handle_new_user(const std::string& username) {
 
 // Удаление пользователя
 void handle_deleted_user(const std::string& username) {
-    std::string cmd = "sudo userdel -r " + username + " >/dev/null 2>&1";
+    std::string cmd = "userdel -r " + username + " >/dev/null 2>&1";
     system(cmd.c_str());
 }
 
@@ -187,7 +187,6 @@ int main() {
         perror("pipe");
         return 1;
     }
-
     // Запускаем мониторинг в отдельном процессе
     pid_t monitor_pid = -1;
     pid_t pid = fork();
