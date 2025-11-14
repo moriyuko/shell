@@ -121,6 +121,7 @@ void monitor_users_dir(int sync_pipe) {
         return;
     }
 
+    usleep(200000);
     // сигнал, что мониторинг готов
     char ready = '1';
     write(sync_pipe, &ready, 1);
