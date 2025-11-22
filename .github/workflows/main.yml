@@ -26,9 +26,8 @@ jobs:
 
       - name: Run tests inside Docker container
         run: |
-          docker pull tyvik/kubsh_test:master
+          docker pull moriyuko/test_kubsh:latest
           
-          # dpkg-buildpackage создает .deb файл в родительской директории
           DEB_FILE=$(ls ../*.deb 2>/dev/null | head -n 1 || ls ./*.deb 2>/dev/null | head -n 1)
           
           if [ -z "$DEB_FILE" ]; then
@@ -36,11 +35,10 @@ jobs:
             exit 1
           fi
           
-          # Копируем .deb файл в текущую директорию для удобства
           cp "$DEB_FILE" ./
           DEB_FILE="./$(basename "$DEB_FILE")"
           
-          docker run --rm -v "$PWD":/app tyvik/kubsh_test:master \
+          docker run --rm -v "$PWD":/app moriyuko/test_kubsh:latest \
             bash -c "
               set -e
               cd /app
