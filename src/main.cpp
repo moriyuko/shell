@@ -87,8 +87,7 @@ int delete_user(const std::string& username) {
 }
 
 // FUSE операции
-static int vfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_info* fi) {
-    (void) fi;
+static int vfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_info*) {
     memset(stbuf, 0, sizeof(struct stat));
     
     std::string spath(path);
@@ -155,20 +154,22 @@ static int vfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_in
 }
 
 static int vfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
-                       off_t offset, struct fuse_file_info* fi) {
+                       off_t offset, struct fuse_file_info* fi,
+                       enum fuse_readdir_flags flags) {
     (void) offset;
     (void) fi;
+    (void) flags;
     
     std::string spath(path);
     
-    filler(buf, ".", NULL, 0);
-    filler(buf, "..", NULL, 0);
+    filler(buf, ".", NULL, 0, (fuse_fill_dir_flags)0);
+    filler(buf, "..", NULL, 0, (fuse_fill_dir_flags)0);
     
     // Корневая директория - список пользователей
     if (spath == "/") {
         std::lock_guard<std::mutex> lock(fs_mutex);
         for (const auto& pair : user_cache) {
-            filler(buf, pair.first.c_str(), NULL, 0);
+            filler(buf, pair.first.c_str(), NULL, 0, (fuse_fill_dir_flags)0);
         }
         return 0;
     }
@@ -185,9 +186,9 @@ static int vfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
         std::lock_guard<std::mutex> lock(fs_mutex);
         auto it = user_cache.find(parts[0]);
         if (it != user_cache.end()) {
-            filler(buf, "id", NULL, 0);
-            filler(buf, "home", NULL, 0);
-            filler(buf, "shell", NULL, 0);
+            filler(buf, "id", NULL, 0, (fuse_fill_dir_flags)0);
+            filler(buf, "home", NULL, 0, (fuse_fill_dir_flags)0);
+            filler(buf, "shell", NULL, 0, (fuse_fill_dir_flags)0);
             return 0;
         }
         return -ENOENT;
@@ -196,7 +197,7 @@ static int vfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
     return -ENOENT;
 }
 
-static int vfs_open(const char* path, struct fuse_file_info* fi) {
+static int vfs_open(const char* path, struct fuse_file_info*) {
     std::string spath(path);
     
     std::vector<std::string> parts;
@@ -220,9 +221,7 @@ static int vfs_open(const char* path, struct fuse_file_info* fi) {
 }
 
 static int vfs_read(const char* path, char* buf, size_t size, off_t offset,
-                    struct fuse_file_info* fi) {
-    (void) fi;
-    
+                    struct fuse_file_info*) {
     std::string spath(path);
     
     std::vector<std::string> parts;
@@ -262,9 +261,7 @@ static int vfs_read(const char* path, char* buf, size_t size, off_t offset,
     return size;
 }
 
-static int vfs_mkdir(const char* path, mode_t mode) {
-    (void) mode;
-    
+static int vfs_mkdir(const char* path, mode_t) {
     std::string spath(path);
     if (spath.length() <= 1) return -EINVAL;
     
