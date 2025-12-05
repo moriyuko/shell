@@ -1,6 +1,6 @@
-#define FUSE_USE_VERSION 29
+#define FUSE_USE_VERSION 31
 
-#include <fuse.h>
+#include <fuse3/fuse.h>
 #include <iostream>
 #include <string>
 #include <fstream>
