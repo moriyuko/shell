@@ -1,7 +1,7 @@
 Source: kubsh
 Section: utils
 Priority: optional
-Build-Depends: g++, debhelper
+Build-Depends: g++, debhelper, libfuse3-dev, pkg-config
 Maintainer: Angelika Nikolaidi <angelika.nikolaidi@gmail.com>
 Standards-Version: 4.5.0
 
