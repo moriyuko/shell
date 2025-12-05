@@ -4,8 +4,10 @@
 	dh $@
 
 override_dh_auto_build:
-	g++ -std=c++17 src/main.cpp -o kubsh
+	$(MAKE)
+
+override_dh_auto_clean:
+	$(MAKE) clean
 
 override_dh_auto_install:
-	mkdir -p debian/kubsh/usr/bin
-	cp kubsh debian/kubsh/usr/bin/kubsh
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/kubsh

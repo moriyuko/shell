@@ -1,6 +1,8 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra $(shell pkg-config fuse3 --cflags)
-LDFLAGS = $(shell pkg-config fuse3 --libs) -lpthread
+CXXFLAGS = -std=c++17 -Wall -Wextra -Wno-missing-field-initializers -Wno-unused-parameter
+FUSE_CFLAGS = $(shell pkg-config fuse3 --cflags 2>/dev/null || echo "-I/usr/include/fuse3 -DFUSE_USE_VERSION=31")
+FUSE_LIBS = $(shell pkg-config fuse3 --libs 2>/dev/null || echo "-lfuse3")
+LDFLAGS = $(FUSE_LIBS) -lpthread
 SRC = src/main.cpp
 BIN = kubsh
 
@@ -10,7 +12,7 @@ all: build
 
 # Компиляция из исходников
 build:
-	$(CXX) $(CXXFLAGS) $(SRC) -o $(BIN) $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) $(FUSE_CFLAGS) $(SRC) -o $(TARGET) $(LDFLAGS)
 
 # Запуск kubsh
 run: build

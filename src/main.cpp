@@ -1,6 +1,6 @@
-#define FUSE_USE_VERSION 31
+#define FUSE_USE_VERSION 29
 
-#include <fuse3/fuse.h>
+#include <fuse.h>
 #include <iostream>
 #include <string>
 #include <fstream>
@@ -155,27 +155,25 @@ static int vfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_in
 }
 
 static int vfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
-                       off_t offset, struct fuse_file_info* fi,
-                       enum fuse_readdir_flags flags) {
+                       off_t offset, struct fuse_file_info* fi) {
     (void) offset;
     (void) fi;
-    (void) flags;
     
     std::string spath(path);
     
-    filler(buf, ".", NULL, 0, (fuse_fill_dir_flags)0);
-    filler(buf, "..", NULL, 0, (fuse_fill_dir_flags)0);
+    filler(buf, ".", NULL, 0);
+    filler(buf, "..", NULL, 0);
     
-    // Корневая директория
+    // Корневая директория - список пользователей
     if (spath == "/") {
         std::lock_guard<std::mutex> lock(fs_mutex);
         for (const auto& pair : user_cache) {
-            filler(buf, pair.first.c_str(), NULL, 0, (fuse_fill_dir_flags)0);
+            filler(buf, pair.first.c_str(), NULL, 0);
         }
         return 0;
     }
     
-    // Директория пользователя
+    // Директория пользователя - список файлов
     std::vector<std::string> parts;
     std::istringstream ss(spath.substr(1));
     std::string part;
@@ -187,9 +185,9 @@ static int vfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
         std::lock_guard<std::mutex> lock(fs_mutex);
         auto it = user_cache.find(parts[0]);
         if (it != user_cache.end()) {
-            filler(buf, "id", NULL, 0, (fuse_fill_dir_flags)0);
-            filler(buf, "home", NULL, 0, (fuse_fill_dir_flags)0);
-            filler(buf, "shell", NULL, 0, (fuse_fill_dir_flags)0);
+            filler(buf, "id", NULL, 0);
+            filler(buf, "home", NULL, 0);
+            filler(buf, "shell", NULL, 0);
             return 0;
         }
         return -ENOENT;
@@ -300,17 +298,22 @@ static int vfs_rmdir(const char* path) {
     return 0;
 }
 
-static struct fuse_operations vfs_oper = {
-    .getattr = vfs_getattr,
-    .mkdir = vfs_mkdir,
-    .rmdir = vfs_rmdir,
-    .open = vfs_open,
-    .read = vfs_read,
-    .readdir = vfs_readdir,
-};
+static struct fuse_operations vfs_oper = {};
+
+void init_fuse_operations() {
+    memset(&vfs_oper, 0, sizeof(vfs_oper));
+    vfs_oper.getattr = vfs_getattr;
+    vfs_oper.mkdir = vfs_mkdir;
+    vfs_oper.rmdir = vfs_rmdir;
+    vfs_oper.open = vfs_open;
+    vfs_oper.read = vfs_read;
+    vfs_oper.readdir = vfs_readdir;
+}
 
 // Поток для FUSE
-void* fuse_thread(void* arg) {
+void* fuse_thread(void*) {
+    init_fuse_operations();
+    
     char* argv[] = {
         (char*)"kubsh_vfs",
         (char*)"-f",
@@ -343,7 +346,7 @@ int main() {
         std::cerr << "History file unavailable!" << std::endl;
     }
     
-    // Точка монтирования
+    // Создаем точку монтирования
     struct stat st;
     if (stat(MOUNT_POINT.c_str(), &st) != 0) {
         if (mkdir(MOUNT_POINT.c_str(), 0755) != 0) {
@@ -352,12 +355,14 @@ int main() {
         }
     }
     
+    // Инициализируем кеш пользователей
     refresh_user_cache();
     
     // Запускаем FUSE в отдельном потоке
     pthread_t fuse_tid;
     pthread_create(&fuse_tid, nullptr, fuse_thread, nullptr);
     
+    // Ждем пока FUSE смонтируется
     sleep(1);
     
     signal(SIGHUP, handle_sighup);
