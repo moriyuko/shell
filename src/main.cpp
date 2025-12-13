@@ -11,7 +11,7 @@
 #include <pwd.h>
 #include <csignal>
 #include <vector>
-#include <sys/inotify.h>
+#include <set>
 #include <cerrno>
 
 void handle_sighup(int) {
@@ -61,7 +61,6 @@ void create_vfs() {
         std::string home = parts[5];
         std::string shell = parts[6];
 
-        // Создаем каталог только для пользователей с shell, заканчивающим на 'sh'
         if (shell.length() < 2 || shell.substr(shell.length() - 2) != "sh") {
             continue;
         }
@@ -96,6 +95,21 @@ void handle_new_user(const std::string& username) {
                 verifyResult = system(checkCmd.c_str());
                 retries++;
             }
+            
+            if (verifyResult == 0) {
+                std::ifstream passwd("/etc/passwd");
+                std::string line;
+                while (std::getline(passwd, line)) {
+                    auto parts = split(line, ':');
+                    if (parts.size() >= 7 && parts[0] == username) {
+                        std::string user_dir = USERS_DIR + "/" + username;
+                        std::ofstream(user_dir + "/id") << parts[2];
+                        std::ofstream(user_dir + "/home") << parts[5];
+                        std::ofstream(user_dir + "/shell") << parts[6];
+                        break;
+                    }
+                }
+            }
         }
     }
 }
@@ -106,144 +120,100 @@ void handle_deleted_user(const std::string& username) {
     system(cmd.c_str());
 }
 
-// Отслеживание изменений
-void monitor_users_dir(int sync_pipe) {
-    // Убеждаемся, что директория существует перед началом мониторинга
+// Отслеживание изменений 
+void monitor_users_dir() {
+    std::set<std::string> known_users;
+    
     if (!dir_exists(USERS_DIR.c_str())) {
         make_dir(USERS_DIR.c_str());
     }
     
-    DIR* dir = opendir(USERS_DIR.c_str());
-    if (dir) {
-        struct dirent* entry;
-        while ((entry = readdir(dir)) != nullptr) {
-            if (entry->d_type == DT_DIR && 
-                entry->d_name[0] != '.') {
-                handle_new_user(entry->d_name);
-            }
-        }
-        closedir(dir);
-    }
-
-    int fd = inotify_init();
-    if (fd < 0) {
-        perror("inotify_init");
-        close(sync_pipe);
-        return;
-    }
-
-    int wd = inotify_add_watch(fd, USERS_DIR.c_str(), IN_CREATE | IN_DELETE);
-    if (wd < 0) {
-        perror("inotify_add_watch");
-        std::cerr << "Failed to watch directory: " << USERS_DIR << std::endl;
-        close(fd);
-        close(sync_pipe);
-        return;
-    }
-
-    char ready = '1';
-    write(sync_pipe, &ready, 1);
-    close(sync_pipe);
-
-    char buffer[4096];
     while (true) {
-        int length = read(fd, buffer, sizeof(buffer));
-        if (length < 0) {
-            if (errno == EINTR) {
-                continue; 
-            }
-            break; 
-        }
+        std::set<std::string> current_users;
         
-        if (length == 0) {
-            continue;
-        }
-
-        int i = 0;
-        while (i < length) {
-            struct inotify_event *event = (struct inotify_event *) &buffer[i];
-            if (event->len > 0) {
-                std::string name = event->name;
-                if (name.length() > 0 && name[0] != '.') {
-                    if (event->mask & IN_CREATE && (event->mask & IN_ISDIR)) {
-                        handle_new_user(name);
-                    } else if (event->mask & IN_DELETE && (event->mask & IN_ISDIR)) {
-                        handle_deleted_user(name);
+        DIR* dir = opendir(USERS_DIR.c_str());
+        if (dir) {
+            struct dirent* entry;
+            while ((entry = readdir(dir)) != nullptr) {
+                if (entry->d_type == DT_DIR && 
+                    entry->d_name[0] != '.' &&
+                    std::string(entry->d_name) != "." &&
+                    std::string(entry->d_name) != "..") {
+                    
+                    std::string username = entry->d_name;
+                    current_users.insert(username);
+                    
+                    if (known_users.find(username) == known_users.end()) {
+                        handle_new_user(username);
                     }
                 }
             }
-            i += sizeof(struct inotify_event) + event->len;
+            closedir(dir);
         }
+        
+        // Проверяем удалённых пользователей
+        for (const auto& username : known_users) {
+            if (current_users.find(username) == current_users.end()) {
+                handle_deleted_user(username);
+            }
+        }
+        
+        known_users = current_users;
+        
+        // Polling каждые 100ms
+        usleep(100000);
     }
-
-    close(fd);
 }
 
 int main() {
-  std::cout << std::unitbuf;
-  std::cerr << std::unitbuf;
+    std::cout << std::unitbuf;
+    std::cerr << std::unitbuf;
 
-  std::string input;
-  
-  const char* homeEnv = getenv("HOME");
-  if (!homeEnv) {
-    homeEnv = "/opt"; // fallback для тестов
-  }
-  std::string home = homeEnv; //переменная окружения для поиска домашнего каталога
-  std::string history_file = home + "/.kubsh_history";
-
-  std::ofstream history_out(history_file, std::ios::app);
-  if (!history_out.is_open()) {
-    std::cerr << "History file unavailable!" << std::endl;
-  }
-
-  create_vfs();
-
-  signal(SIGHUP, handle_sighup);
-
-    int sync_pipe[2];
-    if (pipe(sync_pipe) == -1) {
-        perror("pipe");
-        return 1;
+    std::string input;
+    
+    const char* homeEnv = getenv("HOME");
+    if (!homeEnv) {
+        homeEnv = "/opt"; // fallback для тестов
     }
-    // Запускаем мониторинг в отдельном процессе
-    pid_t monitor_pid = -1;
-    pid_t pid = fork();
-    if (pid == 0) {
-        close(sync_pipe[0]); 
-        monitor_users_dir(sync_pipe[1]);  
+    std::string home = homeEnv;
+    std::string history_file = home + "/.kubsh_history";
+
+    std::ofstream history_out(history_file, std::ios::app);
+    if (!history_out.is_open()) {
+        std::cerr << "History file unavailable!" << std::endl;
+    }
+
+    create_vfs();
+
+    signal(SIGHUP, handle_sighup);
+
+    // Запускаем мониторинг
+    pid_t monitor_pid = fork();
+    if (monitor_pid == 0) {
+        monitor_users_dir();
         exit(0);
-    } else if (pid > 0) {
-        monitor_pid = pid;
-        close(sync_pipe[1]); 
-        
-        char ready;
-        read(sync_pipe[0], &ready, 1);
-        close(sync_pipe[0]);
-    } else {
+    } else if (monitor_pid < 0) {
         perror("fork");
-        close(sync_pipe[0]);
-        close(sync_pipe[1]);
     }
 
-  while (true) {
+    while (true) {
         std::cout << "kubsh$ ";
 
-        // выход
+        // Выход
         if (!std::getline(std::cin, input)) {
             std::cout << "\nExiting...\n";
             break;
         }
 
-        // история
+        // История
         if (history_out.is_open()) {
             history_out << input << std::endl;
         }
 
-        // эхо
+        // Эхо
         if (input.substr(0, 5) == "echo ") {
             std::string echoArg = input.substr(5);
-            // Убираем кавычки, если они есть
+            
             if (echoArg.length() >= 2 && echoArg[0] == '\'' && echoArg[echoArg.length()-1] == '\'') {
                 echoArg = echoArg.substr(1, echoArg.length()-2);
             } else if (echoArg.length() >= 2 && echoArg[0] == '"' && echoArg[echoArg.length()-1] == '"') {
@@ -253,10 +223,10 @@ int main() {
             continue;
         }
         
-        // обработка команды debug (для тестов)
+        // Обработка команды debug (для тестов)
         if (input.substr(0, 6) == "debug ") {
             std::string debugArg = input.substr(6);
-            // Убираем кавычки, если они есть
+
             if (debugArg.length() >= 2 && debugArg[0] == '\'' && debugArg[debugArg.length()-1] == '\'') {
                 debugArg = debugArg.substr(1, debugArg.length()-2);
             } else if (debugArg.length() >= 2 && debugArg[0] == '"' && debugArg[debugArg.length()-1] == '"') {
@@ -266,7 +236,7 @@ int main() {
             continue;
         }
 
-        // эхо переменной окружения
+        // Эхо переменной окружения
         if (input.rfind("\\e $", 0) == 0) {
             std::string var = input.substr(4);
             const char* value = std::getenv(var.c_str());
@@ -291,25 +261,35 @@ int main() {
             continue;
         }
 
-        // команды юзеров
+        // Команды юзеров
         if (input.rfind("\\adduser ", 0) == 0) {
-            handle_new_user(input.substr(9));
+            std::string username = input.substr(9);
+            std::string user_dir = USERS_DIR + "/" + username;
+            // Создаём директорию, мониторинг её подхватит
+            make_dir(user_dir.c_str());
+            continue;
         } 
         if (input.rfind("\\deluser ", 0) == 0) {
-            handle_deleted_user(input.substr(9));
+            std::string username = input.substr(9);
+            std::string user_dir = USERS_DIR + "/" + username;
+            // Удаляем директорию
+            std::string cmd = "rm -rf " + user_dir;
+            system(cmd.c_str());
+            continue;
         }
 
-        // cd
+        // CD
         if (input.rfind("cd ", 0) == 0) {
             std::string path = input.substr(3);
-            if (path.empty()) path = getenv("HOME");  // cd без аргументов -> домашняя директория
+            if (path.empty()) path = getenv("HOME");
 
             if (chdir(path.c_str()) != 0) {
-                perror("cd");  // выводит ошибку, если путь некорректный
+                perror("cd");
             }
+            continue;
         }
 
-        //выход
+        // Выход
         if (input == "\\q") {
             std::cout << "Exiting...\n";
             break;
@@ -351,7 +331,7 @@ int main() {
 
         pid_t pid = fork();
         if (pid == 0) {
-            execvp(args[0], args.data()); // ищет в $PATH и запускает
+            execvp(args[0], args.data());
             std::cout << args[0] << ": command not found" << std::endl;
             exit(1);
         } else if (pid > 0) {
@@ -362,6 +342,7 @@ int main() {
         }
     }
     
+    // Останавливаем мониторинг
     if (monitor_pid > 0) {
         kill(monitor_pid, SIGTERM);
         waitpid(monitor_pid, nullptr, 0);
