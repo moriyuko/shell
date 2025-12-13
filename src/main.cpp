@@ -22,7 +22,7 @@ void handle_sighup(int) {
 
 const std::string USERS_DIR = "/opt/users";
 
-// База данных пользователей для отслеживания обработанных
+// База данных пользователей для отслеживания
 std::map<std::string, std::vector<std::string>> user_database;
 std::atomic<bool> stop_monitoring(false);
 
@@ -50,31 +50,25 @@ std::vector<std::string> split(const std::string& str, char delim) {
     return parts;
 }
 
-// Загрузка всех пользователей из /etc/passwd в user_database
-void load_user_database() {
-    user_database.clear();
-    std::ifstream passwd_file("/etc/passwd");
-    std::string line;
-    
-    while (std::getline(passwd_file, line)) {
-        auto fields = split(line, ':');
-        if (fields.size() >= 7) {
-            user_database[fields[0]] = fields;
-        }
-    }
-    passwd_file.close();
-}
-
 // Создание структуры пользователей
 void create_vfs() {
     if (!dir_exists(USERS_DIR.c_str())) {
         make_dir(USERS_DIR.c_str());
     }
 
-    // Загружаем базу данных пользователей
-    load_user_database();
+    // Загружаем всех пользователей из /etc/passwd в базу данных
+    user_database.clear();
+    std::ifstream passwd("/etc/passwd");
+    std::string line;
+    while (std::getline(passwd, line)) {
+        auto parts = split(line, ':');
+        if (parts.size() >= 7) {
+            user_database[parts[0]] = parts;
+        }
+    }
+    passwd.close();
 
-    // Создаём директории для пользователей с shell, заканчивающимся на 'sh'
+    // Создаём каталоги для пользователей с shell, заканчивающим на 'sh'
     for (const auto& [username, fields] : user_database) {
         if (fields.size() >= 7) {
             std::string shell = fields[6];
@@ -106,16 +100,25 @@ void monitor_users_dir() {
                     
                     std::string username = entry->d_name;
                     
+                    // Проверяем, есть ли пользователь в базе данных
                     if (user_database.find(username) == user_database.end()) {
+                        // Пользователя нет в базе - создаём
                         std::string cmd = "useradd -m -s /bin/bash " + username + " 2>/dev/null";
                         int result = system(cmd.c_str());
                         
                         if (result == 0) {
+                            // Успешно создан, читаем данные из /etc/passwd
                             std::ifstream passwd_file("/etc/passwd");
                             std::string line;
                             while (std::getline(passwd_file, line)) {
-                                auto fields = split(line, ':');
+                                std::vector<std::string> fields;
+                                std::string field;
+                                std::istringstream ss(line);
+                                while (std::getline(ss, field, ':')) {
+                                    fields.push_back(field);
+                                }
                                 if (fields.size() >= 7 && fields[0] == username) {
+                                    // Добавляем в базу данных
                                     user_database[username] = fields;
                                     break;
                                 }
@@ -143,6 +146,7 @@ void monitor_users_dir() {
             closedir(dir);
         }
         
+        // Polling каждые 100ms
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 }
@@ -157,7 +161,7 @@ int main() {
     if (!homeEnv) {
         homeEnv = "/opt"; // fallback для тестов
     }
-    std::string home = homeEnv;
+    std::string home = homeEnv; //переменная окружения для поиска домашнего каталога
     std::string history_file = home + "/.kubsh_history";
 
     std::ofstream history_out(history_file, std::ios::app);
@@ -169,26 +173,28 @@ int main() {
 
     signal(SIGHUP, handle_sighup);
 
+    // Запускаем мониторинг в отдельном потоке
     std::thread monitor_thread(monitor_users_dir);
     monitor_thread.detach();
 
     while (true) {
         std::cout << "kubsh$ ";
 
-        // Выход
+        // выход
         if (!std::getline(std::cin, input)) {
             std::cout << "\nExiting...\n";
             break;
         }
 
-        // История
+        // история
         if (history_out.is_open()) {
             history_out << input << std::endl;
         }
 
-        // Эхо
+        // эхо
         if (input.substr(0, 5) == "echo ") {
             std::string echoArg = input.substr(5);
+            // Убираем кавычки, если они есть
             if (echoArg.length() >= 2 && echoArg[0] == '\'' && echoArg[echoArg.length()-1] == '\'') {
                 echoArg = echoArg.substr(1, echoArg.length()-2);
             } else if (echoArg.length() >= 2 && echoArg[0] == '"' && echoArg[echoArg.length()-1] == '"') {
@@ -198,9 +204,10 @@ int main() {
             continue;
         }
         
-        // Обработка команды debug (для тестов)
+        // обработка команды debug (для тестов)
         if (input.substr(0, 6) == "debug ") {
             std::string debugArg = input.substr(6);
+            // Убираем кавычки, если они есть
             if (debugArg.length() >= 2 && debugArg[0] == '\'' && debugArg[debugArg.length()-1] == '\'') {
                 debugArg = debugArg.substr(1, debugArg.length()-2);
             } else if (debugArg.length() >= 2 && debugArg[0] == '"' && debugArg[debugArg.length()-1] == '"') {
@@ -210,12 +217,13 @@ int main() {
             continue;
         }
 
-        // Эхо переменной окружения
+        // эхо переменной окружения
         if (input.rfind("\\e $", 0) == 0) {
             std::string var = input.substr(4);
             const char* value = std::getenv(var.c_str());
             if (value) {
                 std::string valueStr(value);
+                // Если переменная PATH, выводим каждый путь на отдельной строке
                 if (var == "PATH" && valueStr.find(':') != std::string::npos) {
                     std::istringstream pathStream(valueStr);
                     std::string pathItem;
@@ -234,18 +242,22 @@ int main() {
             continue;
         }
 
-        // Команды юзеров
+        // команды юзеров
         if (input.rfind("\\adduser ", 0) == 0) {
             std::string username = input.substr(9);
             std::string user_dir = USERS_DIR + "/" + username;
+            // Создаём директорию, мониторинг её подхватит
             make_dir(user_dir.c_str());
             continue;
         } 
         if (input.rfind("\\deluser ", 0) == 0) {
             std::string username = input.substr(9);
+            // Удаляем из базы данных
             user_database.erase(username);
+            // Удаляем пользователя из системы
             std::string cmd = "userdel -r " + username + " >/dev/null 2>&1";
             system(cmd.c_str());
+            // Удаляем директорию
             std::string user_dir = USERS_DIR + "/" + username;
             std::string rmcmd = "rm -rf " + user_dir;
             system(rmcmd.c_str());
@@ -255,15 +267,15 @@ int main() {
         // cd
         if (input.rfind("cd ", 0) == 0) {
             std::string path = input.substr(3);
-            if (path.empty()) path = getenv("HOME");
+            if (path.empty()) path = getenv("HOME");  // cd без аргументов -> домашняя директория
 
             if (chdir(path.c_str()) != 0) {
-                perror("cd");
+                perror("cd");  // выводит ошибку, если путь некорректный
             }
             continue;
         }
 
-        // Выход
+        //выход
         if (input == "\\q") {
             std::cout << "Exiting...\n";
             break;
@@ -305,7 +317,7 @@ int main() {
 
         pid_t pid = fork();
         if (pid == 0) {
-            execvp(args[0], args.data());
+            execvp(args[0], args.data()); // ищет в $PATH и запускает
             std::cout << args[0] << ": command not found" << std::endl;
             exit(1);
         } else if (pid > 0) {
