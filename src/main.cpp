@@ -113,6 +113,18 @@ void monitor_users_dir(int sync_pipe) {
         make_dir(USERS_DIR.c_str());
     }
     
+    DIR* dir = opendir(USERS_DIR.c_str());
+    if (dir) {
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            if (entry->d_type == DT_DIR && 
+                entry->d_name[0] != '.') {
+                handle_new_user(entry->d_name);
+            }
+        }
+        closedir(dir);
+    }
+
     int fd = inotify_init();
     if (fd < 0) {
         perror("inotify_init");
@@ -129,8 +141,6 @@ void monitor_users_dir(int sync_pipe) {
         return;
     }
 
-    usleep(200000);
-    // сигнал, что мониторинг готов
     char ready = '1';
     write(sync_pipe, &ready, 1);
     close(sync_pipe);
