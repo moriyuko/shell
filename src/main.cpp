@@ -79,38 +79,62 @@ void create_vfs() {
 
 // Добавление нового пользователя
 void handle_new_user(const std::string& username) {
-    // Проверяем, существует ли пользователь
     std::string checkCmd = "id " + username + " >/dev/null 2>&1";
     int userExists = system(checkCmd.c_str());
     
     if (userExists != 0) {
-        std::string cmd = "useradd -m -s /bin/bash " + username + " 2>&1";
+        std::string cmd = "useradd -m -s /bin/bash " + username + " 2>/dev/null";
         int result = system(cmd.c_str());
         
-        if (result == 0 || result == 2304) { // 2304 = код возврата 9 (пользователь уже существует)
-            int verifyResult = system(checkCmd.c_str());
-            int retries = 0;
-            while (verifyResult != 0 && retries < 100) {
-                usleep(10000);
-                verifyResult = system(checkCmd.c_str());
-                retries++;
-            }
-            
-            if (verifyResult == 0) {
-                std::ifstream passwd("/etc/passwd");
-                std::string line;
-                while (std::getline(passwd, line)) {
-                    auto parts = split(line, ':');
-                    if (parts.size() >= 7 && parts[0] == username) {
-                        std::string user_dir = USERS_DIR + "/" + username;
-                        std::ofstream(user_dir + "/id") << parts[2];
-                        std::ofstream(user_dir + "/home") << parts[5];
-                        std::ofstream(user_dir + "/shell") << parts[6];
-                        break;
-                    }
+        if (result == 0) {
+            std::ifstream passwd_file("/etc/passwd");
+            std::string line;
+            while (std::getline(passwd_file, line)) {
+                auto parts = split(line, ':');
+                if (parts.size() >= 7 && parts[0] == username) {
+                    std::string user_dir = USERS_DIR + "/" + username;
+                    
+                    std::ofstream id_file(user_dir + "/id");
+                    if (id_file.is_open()) id_file << parts[2];
+                    id_file.close();
+                    
+                    std::ofstream home_file(user_dir + "/home");
+                    if (home_file.is_open()) home_file << parts[5];
+                    home_file.close();
+                    
+                    std::ofstream shell_file(user_dir + "/shell");
+                    if (shell_file.is_open()) shell_file << parts[6];
+                    shell_file.close();
+                    
+                    break;
                 }
             }
+            passwd_file.close();
         }
+    } else {
+        std::ifstream passwd_file("/etc/passwd");
+        std::string line;
+        while (std::getline(passwd_file, line)) {
+            auto parts = split(line, ':');
+            if (parts.size() >= 7 && parts[0] == username) {
+                std::string user_dir = USERS_DIR + "/" + username;
+                
+                std::ofstream id_file(user_dir + "/id");
+                if (id_file.is_open()) id_file << parts[2];
+                id_file.close();
+                
+                std::ofstream home_file(user_dir + "/home");
+                if (home_file.is_open()) home_file << parts[5];
+                home_file.close();
+                
+                std::ofstream shell_file(user_dir + "/shell");
+                if (shell_file.is_open()) shell_file << parts[6];
+                shell_file.close();
+                
+                break;
+            }
+        }
+        passwd_file.close();
     }
 }
 
@@ -120,7 +144,7 @@ void handle_deleted_user(const std::string& username) {
     system(cmd.c_str());
 }
 
-// Отслеживание изменений 
+// Отслеживание изменений
 void monitor_users_dir() {
     std::set<std::string> known_users;
     
@@ -160,7 +184,6 @@ void monitor_users_dir() {
         
         known_users = current_users;
         
-        // Polling каждые 100ms
         usleep(100000);
     }
 }
@@ -278,7 +301,7 @@ int main() {
             continue;
         }
 
-        // CD
+        // cd
         if (input.rfind("cd ", 0) == 0) {
             std::string path = input.substr(3);
             if (path.empty()) path = getenv("HOME");
