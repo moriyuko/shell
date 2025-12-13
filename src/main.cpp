@@ -146,15 +146,13 @@ void handle_deleted_user(const std::string& username) {
 
 // Отслеживание изменений
 void monitor_users_dir() {
-    std::set<std::string> known_users;
+    std::set<std::string> processed_users;  // Пользователи, которые мы УЖЕ обработали
     
     if (!dir_exists(USERS_DIR.c_str())) {
         make_dir(USERS_DIR.c_str());
     }
     
     while (true) {
-        std::set<std::string> current_users;
-        
         DIR* dir = opendir(USERS_DIR.c_str());
         if (dir) {
             struct dirent* entry;
@@ -165,24 +163,18 @@ void monitor_users_dir() {
                     std::string(entry->d_name) != "..") {
                     
                     std::string username = entry->d_name;
-                    current_users.insert(username);
+                    std::string user_dir = USERS_DIR + "/" + username;
+                    std::string id_file = user_dir + "/id";
                     
-                    if (known_users.find(username) == known_users.end()) {
+                    struct stat st;
+                    if (stat(id_file.c_str(), &st) != 0) {
                         handle_new_user(username);
+                        processed_users.insert(username);
                     }
                 }
             }
             closedir(dir);
         }
-        
-        // Проверяем удалённых пользователей
-        for (const auto& username : known_users) {
-            if (current_users.find(username) == current_users.end()) {
-                handle_deleted_user(username);
-            }
-        }
-        
-        known_users = current_users;
         
         usleep(100000);
     }
