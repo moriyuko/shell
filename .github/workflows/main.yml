@@ -16,7 +16,7 @@ jobs:
       run: |
         docker pull moriyuko/test_kubsh:latest
 
-        cp src/main.cpp opt/main.cpp
+        cp src/main.cpp
 
         docker run --rm -v "$PWD":/app moriyuko/test_kubsh:latest \
           bash -c "
