@@ -15,10 +15,15 @@ jobs:
     - name: Run tests
       run: |
         docker pull moriyuko/test_kubsh:latest
+
+        cp src/main.cpp opt/main.cpp
+
         docker run --rm -v "$PWD":/app moriyuko/test_kubsh:latest \
           bash -c "
             set -e
             cd /app
+            g++ -o kubsh src/main.cpp -lreadline -lfuse3
+            chmod +x kubsh
             /opt/check.sh
           "
   
