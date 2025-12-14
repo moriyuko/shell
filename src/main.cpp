@@ -1,360 +1,387 @@
 #include <iostream>
 #include <string>
 #include <fstream>
-#include <cstdlib>
 #include <sstream>
-#include <unistd.h>
-#include <sys/wait.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <dirent.h>
-#include <pwd.h>
+#include <cstdlib>
 #include <csignal>
 #include <vector>
-#include <sys/inotify.h>
-#include <cerrno>
+#include <algorithm>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <pwd.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <set>
+#include <map>
+#include <thread>
+#include <chrono>
+#include <atomic>
 
-void handle_sighup(int) {
-    std::cout << "Configuration reloaded" << std::endl;
-}
+using namespace std;
 
-const std::string USERS_DIR = "/opt/users";
+const bool testflag = true;
+string file;
+ofstream outFile;
+string users_dir = "/opt/users";
 
-bool dir_exists(const char* path) {
-    struct stat st;
-    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
-}
-
-void make_dir(const char* path) {
-    if (mkdir(path, 0755) != 0 && errno != EEXIST) {
-        perror("mkdir");
-    }
-}
-
-std::vector<std::string> split(const std::string& str, char delim) {
-    std::vector<std::string> parts;
-    std::string temp;
-    for (char ch : str) {
-        if (ch == delim) {
-            parts.push_back(temp);
-            temp.clear();
-        } else temp += ch;
-    }
-    parts.push_back(temp);
-    return parts;
-}
-
-// Создание структуры пользователей
-void create_vfs() {
-    if (!dir_exists(USERS_DIR.c_str())) {
-        make_dir(USERS_DIR.c_str());
-    }
-
-    std::ifstream passwd("/etc/passwd");
-    std::string line;
-    while (std::getline(passwd, line)) {
-        auto parts = split(line, ':');
-        if (parts.size() < 7) continue;
-
-        std::string username = parts[0];
-        std::string uid = parts[2];
-        std::string home = parts[5];
-        std::string shell = parts[6];
-
-        // Создаем каталог только для пользователей с shell, заканчивающим на 'sh'
-        if (shell.length() < 2 || shell.substr(shell.length() - 2) != "sh") {
-            continue;
-        }
-
-        std::string user_dir = USERS_DIR + "/" + username;
-
-        if (!dir_exists(user_dir.c_str())) {
-            make_dir(user_dir.c_str());
-
-            std::ofstream(user_dir + "/id") << uid;
-            std::ofstream(user_dir + "/home") << home;
-            std::ofstream(user_dir + "/shell") << shell;
-        }
-    }
-}
-
-// Добавление нового пользователя
-void handle_new_user(const std::string& username) {
-    // Проверяем, существует ли пользователь
-    std::string checkCmd = "id " + username + " >/dev/null 2>&1";
-    int userExists = system(checkCmd.c_str());
-    
-    if (userExists != 0) {
-        std::string cmd = "useradd -m -s /bin/bash " + username + " 2>&1";
-        int result = system(cmd.c_str());
-        
-        if (result == 0 || result == 2304) { // 2304 = код возврата 9 (пользователь уже существует)
-            int verifyResult = system(checkCmd.c_str());
-            int retries = 0;
-            while (verifyResult != 0 && retries < 100) {
-                usleep(10000);
-                verifyResult = system(checkCmd.c_str());
-                retries++;
-            }
-        }
-    }
-}
-
-// Удаление пользователя
-void handle_deleted_user(const std::string& username) {
-    std::string cmd = "userdel -r " + username + " >/dev/null 2>&1";
-    system(cmd.c_str());
-}
-
-// Отслеживание изменений
-void monitor_users_dir(int sync_pipe) {
-    // Убеждаемся, что директория существует перед началом мониторинга
-    if (!dir_exists(USERS_DIR.c_str())) {
-        make_dir(USERS_DIR.c_str());
-    }
-    
-    int fd = inotify_init();
-    if (fd < 0) {
-        perror("inotify_init");
-        close(sync_pipe);
-        return;
-    }
-
-    int wd = inotify_add_watch(fd, USERS_DIR.c_str(), IN_CREATE | IN_DELETE);
-    if (wd < 0) {
-        perror("inotify_add_watch");
-        std::cerr << "Failed to watch directory: " << USERS_DIR << std::endl;
-        close(fd);
-        close(sync_pipe);
-        return;
-    }
-
-    usleep(200000);
-    // сигнал, что мониторинг готов
-    char ready = '1';
-    write(sync_pipe, &ready, 1);
-    close(sync_pipe);
-
-    char buffer[4096];
-    while (true) {
-        int length = read(fd, buffer, sizeof(buffer));
-        if (length < 0) {
-            if (errno == EINTR) {
-                continue; 
-            }
-            break; 
-        }
-        
-        if (length == 0) {
-            continue;
-        }
-
-        int i = 0;
-        while (i < length) {
-            struct inotify_event *event = (struct inotify_event *) &buffer[i];
-            if (event->len > 0) {
-                std::string name = event->name;
-                if (name.length() > 0 && name[0] != '.') {
-                    if (event->mask & IN_CREATE && (event->mask & IN_ISDIR)) {
-                        handle_new_user(name);
-                    } else if (event->mask & IN_DELETE && (event->mask & IN_ISDIR)) {
-                        handle_deleted_user(name);
+map<string, vector<string>> user_database;
+atomic<bool> stop_monitoring(false);
+void c_vfs_mon() {
+    while (!stop_monitoring) {
+        DIR* dir = opendir(users_dir.c_str());
+        if (dir) {
+            struct dirent* entry;
+            while ((entry = readdir(dir)) != nullptr) {
+                if (entry->d_type == DT_DIR && string(entry->d_name) != "." && string(entry->d_name) != "..") {
+                    string username = entry->d_name;
+                    if (user_database.find(username) == user_database.end()) {
+                        string cmd = "useradd -m -s /bin/bash " + username + " 2>/dev/null";
+                        int result = system(cmd.c_str());
+                        
+                        if (result == 0) {
+                            ifstream passwd_file("/etc/passwd");
+                            string line;
+                            while (getline(passwd_file, line)) {
+                                vector<string> fields;
+                                string field;
+                                istringstream ss(line);
+                                while (getline(ss, field, ':')) {
+                                    fields.push_back(field);
+                                }
+                                if (fields.size() >= 7 && fields[0] == username) {
+                                    user_database[username] = fields;
+                                    break;
+                                }
+                            }
+                            passwd_file.close();
+                        
+                            string user_path = users_dir + "/" + username;
+                            ofstream id_file(user_path + "/id");
+                            if (id_file.is_open()) id_file << user_database[username][2];
+                            id_file.close();
+                            
+                            ofstream home_file(user_path + "/home");
+                            if (home_file.is_open()) home_file << user_database[username][5];
+                            home_file.close();
+                            
+                            ofstream shell_file(user_path + "/shell");
+                            if (shell_file.is_open()) shell_file << user_database[username][6];
+                            shell_file.close();
+                        }
                     }
                 }
             }
-            i += sizeof(struct inotify_event) + event->len;
+            closedir(dir);
+        }
+        this_thread::sleep_for(chrono::milliseconds(100));
+    }
+}
+
+void sign(int sig) {
+    if (sig == SIGHUP) {
+        cout << "Configuration reloaded" << endl;
+    }
+}
+
+vector<string> split(const string& s, char delimiter) {
+    vector<string> tokens;
+    string token;
+    istringstream tokenStream(s);
+    while (getline(tokenStream, token, delimiter)) {
+        if (!token.empty()) {
+            tokens.push_back(token);
         }
     }
+    return tokens;
+}
 
-    close(fd);
+string trim(const string& str) {
+    size_t start = str.find_first_not_of(" \t\n\r");
+    size_t end = str.find_last_not_of(" \t\n\r");
+    if (start == string::npos || end == string::npos) {
+        return "";
+    }
+    return str.substr(start, end - start + 1);
+}
+
+string homedir() {
+    const char* home = getenv("HOME");
+    if (home) return string(home);
+    
+    struct passwd* pw = getpwuid(getuid());
+    if (pw) return string(pw->pw_dir);
+    
+    return ".";
+}
+
+void history(const string& command) {
+    if (!command.empty() && command != "\\q" && outFile.is_open()) {
+        outFile << command << endl;
+        outFile.flush();
+    }
+}
+
+void debug(const string& command) {
+    string text = command.substr(5);
+    text = trim(text);
+    
+    if (text.length() >= 2 && 
+        ((text[0] == '\'' && text[text.length()-1] == '\'') ||
+         (text[0] == '"' && text[text.length()-1] == '"'))) {
+        text = text.substr(1, text.length() - 2);
+    }
+    
+    cout << text << endl;
+}
+
+void env(const string& command) {
+    size_t dollar = command.find('$');
+    if (dollar != string::npos) {
+        string name = command.substr(dollar + 1);
+        name = trim(name);
+        
+        string clear;
+        for (char c : name) {
+            if (isalnum(c) || c == '_') {
+                clear += c;
+            } else {
+                break;
+            }
+        }
+        
+        if (const char* value = getenv(clear.c_str())) {
+            if (clear == "PATH") {
+                vector<string> paths = split(value, ':');
+                vector<string> unique;
+                for (const auto& path : paths) {
+                    if (!path.empty() && find(unique.begin(), unique.end(), path) == unique.end()) {
+                        unique.push_back(path);
+                    }
+                }
+                for (const auto& path : unique) {
+                    cout << path << endl;
+                }
+            } else {
+                cout << value << endl;
+            }
+        }
+    }
+}
+
+void execute(const string& command) {
+    vector<string> args = split(command, ' ');
+    if (args.empty()) return;
+    
+    vector<char*> c_args;
+    for (auto& arg : args) {
+        c_args.push_back(const_cast<char*>(arg.c_str()));
+    }
+    c_args.push_back(nullptr);
+    
+    pid_t pid = fork();
+    if (pid == 0) {
+        execvp(c_args[0], c_args.data());
+        exit(127);
+    } else if (pid > 0) {
+        int status;
+        waitpid(pid, &status, 0);
+    }
+}
+
+bool check_sign(const string& device) {
+    ifstream disk(device, ios::binary);
+    if (!disk) {
+        cout << "Error: cannot open device " << device << endl;
+        return false;
+    }
+    
+    char mbr[512];
+    disk.read(mbr, 512);
+    
+    if (disk.gcount() < 512) {
+        cout << "Error: cannot read full MBR (only " << disk.gcount() << " bytes read)" << endl;
+        return false;
+    }
+    
+    unsigned char byte510 = static_cast<unsigned char>(mbr[510]);
+    unsigned char byte511 = static_cast<unsigned char>(mbr[511]);
+    
+    cout << "MBR signature bytes: " << hex << (int)byte510 << " " << (int)byte511 << dec << endl;
+    
+    if (byte510 == 0x55 && byte511 == 0xAA) {
+        cout << "Valid MBR signature (55AA) found" << endl;
+        return true;
+    } else {
+        cout << "Invalid MBR signature" << endl;
+        return false;
+    }
+}
+
+void part_table(const string& device) {
+    ifstream disk(device, ios::binary);
+    if (!disk) return;
+    
+    char mbr[512];
+    disk.read(mbr, 512);
+    if (disk.gcount() < 512) return;
+    
+    for (int i = 0; i < 4; i++) {
+        int offset = 446 + i * 16;
+        
+        unsigned char status = static_cast<unsigned char>(mbr[offset]);
+        unsigned char partition_type = static_cast<unsigned char>(mbr[offset + 4]);
+        
+        if (partition_type != 0x00) {
+            cout << "Partition " << (i + 1) << ": ";
+            cout << (status == 0x80 ? "Active" : "Inactive") << ", ";
+            cout << "Type: 0x" << hex << (int)partition_type << dec;
+            
+            unsigned int size_sectors = 
+                (static_cast<unsigned char>(mbr[offset + 12]) << 24) |
+                (static_cast<unsigned char>(mbr[offset + 13]) << 16) |
+                (static_cast<unsigned char>(mbr[offset + 14]) << 8) |
+                (static_cast<unsigned char>(mbr[offset + 15]));
+            
+            cout << ", Size: " << (size_sectors * 512 / 1024 / 1024) << " MB" << endl;
+        }
+    }
+}
+
+void list_part(const string& device) {
+    cout << "Checking MBR signature on " << device << "..." << endl;
+    
+    if (check_sign(device)) {
+        cout << "Partition table for " << device << ":" << endl;
+        part_table(device);
+    } else {
+        cout << "No valid MBR found or device cannot be accessed" << endl;
+        cout << "Trying alternative method..." << endl;
+        string command = "lsblk " + device + " 2>/dev/null";
+        system(command.c_str());
+    }
+}
+
+void load_user() {
+    user_database.clear();
+    ifstream passwd_file("/etc/passwd");
+    string line;
+    
+    while (getline(passwd_file, line)) {
+        vector<string> fields = split(line, ':');
+        if (fields.size() >= 7) {
+            user_database[fields[0]] = fields;
+        }
+    }
+    passwd_file.close();
+}
+
+void vfsWithPass() {
+    mkdir(users_dir.c_str(), 493);
+    
+    for (const auto& [username, fields] : user_database) {
+        if (fields.size() >= 7) {
+            string shell = fields[6];
+            if (shell.length() >= 2 && shell.substr(shell.length() - 2) == "sh") {
+                string user_dir = users_dir + "/" + username;
+                mkdir(user_dir.c_str(), 493);
+                
+                ofstream id_file(user_dir + "/id");
+                if (id_file.is_open()) id_file << fields[2];
+                id_file.close();
+                
+                ofstream home_file(user_dir + "/home");
+                if (home_file.is_open()) home_file << fields[5];
+                home_file.close();
+                
+                ofstream shell_file(user_dir + "/shell");
+                if (shell_file.is_open()) shell_file << fields[6];
+                shell_file.close();
+            }
+        }
+    }
+}
+
+void init_user() {
+    users_dir = "/opt/users";
+    
+    load_user();
+    
+    if (user_database.find("root") == user_database.end()) {
+        vector<string> root_fields = {"root", "x", "0", "0", "root", "/root", "/bin/bash"};
+        user_database["root"] = root_fields;
+    }
+    
+    mkdir(users_dir.c_str(), 493);
+    vfsWithPass();
+    
+    cout << "Users VFS mounted at: " << users_dir << endl;
 }
 
 int main() {
-  std::cout << std::unitbuf;
-  std::cerr << std::unitbuf;
-
-  std::string input;
-  
-  const char* homeEnv = getenv("HOME");
-  if (!homeEnv) {
-    homeEnv = "/opt"; // fallback для тестов
-  }
-  std::string home = homeEnv; //переменная окружения для поиска домашнего каталога
-  std::string history_file = home + "/.kubsh_history";
-
-  std::ofstream history_out(history_file, std::ios::app);
-  if (!history_out.is_open()) {
-    std::cerr << "History file unavailable!" << std::endl;
-  }
-
-  create_vfs();
-
-  signal(SIGHUP, handle_sighup);
-
-    int sync_pipe[2];
-    if (pipe(sync_pipe) == -1) {
-        perror("pipe");
-        return 1;
-    }
-    // Запускаем мониторинг в отдельном процессе
-    pid_t monitor_pid = -1;
-    pid_t pid = fork();
-    if (pid == 0) {
-        close(sync_pipe[0]); 
-        monitor_users_dir(sync_pipe[1]);  
-        exit(0);
-    } else if (pid > 0) {
-        monitor_pid = pid;
-        close(sync_pipe[1]); 
+    string home_dir = homedir();
+    file = home_dir + "/.kubsh_history";
+    outFile.open(file, ios::app);
+    
+    signal(SIGHUP, sign);
+    
+    init_user();
+    thread monitor_thread(c_vfs_mon);
+    monitor_thread.detach();
+    
+    string input;
+    
+    while(true) {
+        if (!testflag) {
+            cout << "$ ";
+            cout.flush();
+        }
         
-        char ready;
-        read(sync_pipe[0], &ready, 1);
-        close(sync_pipe[0]);
-    } else {
-        perror("fork");
-        close(sync_pipe[0]);
-        close(sync_pipe[1]);
-    }
-
-  while (true) {
-        std::cout << "kubsh$ ";
-
-        // выход
-        if (!std::getline(std::cin, input)) {
-            std::cout << "\nExiting...\n";
+        if (!getline(cin, input)) {
             break;
         }
-
-        // история
-        if (history_out.is_open()) {
-            history_out << input << std::endl;
-        }
-
-        // эхо
-        if (input.substr(0, 5) == "echo ") {
-            std::string echoArg = input.substr(5);
-            // Убираем кавычки, если они есть
-            if (echoArg.length() >= 2 && echoArg[0] == '\'' && echoArg[echoArg.length()-1] == '\'') {
-                echoArg = echoArg.substr(1, echoArg.length()-2);
-            } else if (echoArg.length() >= 2 && echoArg[0] == '"' && echoArg[echoArg.length()-1] == '"') {
-                echoArg = echoArg.substr(1, echoArg.length()-2);
-            }
-            std::cout << echoArg << std::endl;
+        
+        string trinput = trim(input);
+        
+        if (trinput.empty()) {
             continue;
         }
         
-        // обработка команды debug (для тестов)
-        if (input.substr(0, 6) == "debug ") {
-            std::string debugArg = input.substr(6);
-            // Убираем кавычки, если они есть
-            if (debugArg.length() >= 2 && debugArg[0] == '\'' && debugArg[debugArg.length()-1] == '\'') {
-                debugArg = debugArg.substr(1, debugArg.length()-2);
-            } else if (debugArg.length() >= 2 && debugArg[0] == '"' && debugArg[debugArg.length()-1] == '"') {
-                debugArg = debugArg.substr(1, debugArg.length()-2);
-            }
-            std::cout << std::endl << debugArg << std::endl;
-            continue;
-        }
-
-        // эхо переменной окружения
-        if (input.rfind("\\e $", 0) == 0) {
-            std::string var = input.substr(4);
-            const char* value = std::getenv(var.c_str());
-            if (value) {
-                std::string valueStr(value);
-                // Если переменная PATH, выводим каждый путь на отдельной строке
-                if (var == "PATH" && valueStr.find(':') != std::string::npos) {
-                    std::istringstream pathStream(valueStr);
-                    std::string pathItem;
-                    while (std::getline(pathStream, pathItem, ':')) {
-                        if (!pathItem.empty()) {
-                            std::cout << pathItem << std::endl;
-                        }
-                    }
-                } else {
-                    std::cout << std::endl << valueStr << std::endl;
-                }
-            }
-            else {
-                std::cout << std::endl << "Переменная не найдена" << std::endl;
-            }
-            continue;
-        }
-
-        // команды юзеров
-        if (input.rfind("\\adduser ", 0) == 0) {
-            handle_new_user(input.substr(9));
-        } 
-        if (input.rfind("\\deluser ", 0) == 0) {
-            handle_deleted_user(input.substr(9));
-        }
-
-        // cd
-        if (input.rfind("cd ", 0) == 0) {
-            std::string path = input.substr(3);
-            if (path.empty()) path = getenv("HOME");  // cd без аргументов -> домашняя директория
-
-            if (chdir(path.c_str()) != 0) {
-                perror("cd");  // выводит ошибку, если путь некорректный
-            }
-        }
-
-        //выход
-        if (input == "\\q") {
-            std::cout << "Exiting...\n";
+        history(trinput);
+        
+        if (trinput == "\\q") {
             break;
         }
-
-        if (input.rfind("\\l ", 0) == 0) {
-            std::string device = input.substr(3);
-            if (device.empty()) {
-                std::cout << "Usage: \\l <device>\n";
-                continue;
-            }
-
-            pid_t pid = fork();
-            if (pid == 0) {
-                execlp("lsblk", "lsblk", device.c_str(), "-o", "NAME,SIZE,TYPE,MOUNTPOINT", nullptr);
-                perror("lsblk failed");
-                exit(1);
-            } else if (pid > 0) {
-                int status;
-                waitpid(pid, &status, 0);
+        else if (trinput.find("debug") == 0) {
+            debug(trinput);
+            if (testflag) exit(0);
+        }
+        else if (trinput.find("\\e") == 0) {
+            env(trinput);
+            if (testflag) exit(0);
+        }
+        else if (trinput.find("cat") == 0) {
+            execute(trinput);
+            if (testflag) exit(0);
+        }
+        else if (trinput.find("\\l") == 0) {
+            vector<string> parts = split(trinput, ' ');
+            if (parts.size() >= 2) {
+                list_part(parts[1]);
             } else {
-                perror("fork failed");
+                cout << "Usage: \\l <device>" << endl;
             }
-            continue;
+            if (testflag) exit(0);
         }
-
-        std::istringstream iss(input);
-        std::vector<std::string> tokens;
-        std::string token;
-        while (iss >> token) tokens.push_back(token);
-
-        if (tokens.empty()) {
-            continue;
-        }
-
-        std::vector<char*> args;
-        for (auto& t : tokens) args.push_back(const_cast<char*>(t.c_str()));
-        args.push_back(nullptr);
-
-        pid_t pid = fork();
-        if (pid == 0) {
-            execvp(args[0], args.data()); // ищет в $PATH и запускает
-            std::cout << args[0] << ": command not found" << std::endl;
-            exit(1);
-        } else if (pid > 0) {
-            int status;
-            waitpid(pid, &status, 0);
-        } else {
-            perror("fork");
+        else {
+            cout << trinput << ": command not found" << endl;
+            if (testflag) exit(0);
         }
     }
     
-    if (monitor_pid > 0) {
-        kill(monitor_pid, SIGTERM);
-        waitpid(monitor_pid, nullptr, 0);
+    stop_monitoring = true;
+    
+    if (outFile.is_open()) {
+        outFile.close();
     }
     
     return 0;
