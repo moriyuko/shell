@@ -21,8 +21,9 @@ jobs:
           -w /app \
           moriyuko/test_kubsh:latest \
           bash -euo pipefail -c "
-            g++ -o kubsh src/main.cpp -lreadline -lfuse3
-            chmod +x kubsh
+            g++ -o /app/kubsh src/main.cpp -lreadline -lfuse3
+            chmod +x /app/kubsh
+            cp /app/kubsh /usr/local/bin/kubsh
             /opt/check.sh
           "
   
