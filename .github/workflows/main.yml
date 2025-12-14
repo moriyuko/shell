@@ -7,41 +7,44 @@ on:
     branches: [ master ]
 
 jobs:
-  build-and-test:
+  test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    - uses: actions/checkout@v4
+    
+    - name: Run tests
+      run: |
+        docker pull moriyuko/test_kubsh:latest
+        docker run --rm -v "$PWD":/app moriyuko/test_kubsh:latest \
+          bash -c "
+            set -e
+            cd /app
+            /opt/check.sh
+          "
+  
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential debhelper fakeroot dpkg-dev
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential debhelper fakeroot dpkg-dev
 
-      - name: Build .deb package
-        run: |
-          make deb
-          make clean
-
-      - name: Run tests inside Docker container
-        run: |
-          docker pull moriyuko/test_kubsh:latest
-          
-          DEB_FILE=$(ls ../*.deb 2>/dev/null | head -n 1 || ls ./*.deb 2>/dev/null | head -n 1)
-          
-          if [ -z "$DEB_FILE" ]; then
-            echo "Error: .deb file not found"
-            exit 1
-          fi
-          
-          cp "$DEB_FILE" ./
-          DEB_FILE="./$(basename "$DEB_FILE")"
-          
-          docker run --rm -v "$PWD":/app moriyuko/test_kubsh:latest \
-            bash -c "
-              set -e
-              cd /app
-              dpkg -i $DEB_FILE || apt-get -f install -y
-              /opt/check.sh
-            "
+    - name: Build .deb package
+      run: |
+        make deb
+        make clean
+        
+    - name: Upload DEB package
+      uses: actions/upload-artifact@v4
+      with:
+        name: kubsh-deb
+        path: kubsh.deb
