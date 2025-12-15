@@ -19,22 +19,24 @@
 
 using namespace std;
 
-const bool testflag = true;
-string file;
-ofstream outFile;
-string users_dir = "/opt/users";
+const bool isTestMode = true;
+string historyFilePath;
+ofstream historyFile;
+string usersDirectory = "/opt/users";
 
-map<string, vector<string>> user_database;
-atomic<bool> stop_monitoring(false);
-void c_vfs_mon() {
-    while (!stop_monitoring) {
-        DIR* dir = opendir(users_dir.c_str());
+map<string, vector<string>> userDatabase;
+atomic<bool> stopMonitoring(false);
+
+// Функция для мониторинга пользовательских директорий
+void monitorUserDirectories() {
+    while (!stopMonitoring) {
+        DIR* dir = opendir(usersDirectory.c_str());
         if (dir) {
             struct dirent* entry;
             while ((entry = readdir(dir)) != nullptr) {
                 if (entry->d_type == DT_DIR && string(entry->d_name) != "." && string(entry->d_name) != "..") {
                     string username = entry->d_name;
-                    if (user_database.find(username) == user_database.end()) {
+                    if (userDatabase.find(username) == userDatabase.end()) {
                         string cmd = "useradd -m -s /bin/bash " + username + " 2>/dev/null";
                         int result = system(cmd.c_str());
                         
@@ -49,23 +51,23 @@ void c_vfs_mon() {
                                     fields.push_back(field);
                                 }
                                 if (fields.size() >= 7 && fields[0] == username) {
-                                    user_database[username] = fields;
+                                    userDatabase[username] = fields;
                                     break;
                                 }
                             }
                             passwd_file.close();
                         
-                            string user_path = users_dir + "/" + username;
+                            string user_path = usersDirectory + "/" + username;
                             ofstream id_file(user_path + "/id");
-                            if (id_file.is_open()) id_file << user_database[username][2];
+                            if (id_file.is_open()) id_file << userDatabase[username][2];
                             id_file.close();
                             
                             ofstream home_file(user_path + "/home");
-                            if (home_file.is_open()) home_file << user_database[username][5];
+                            if (home_file.is_open()) home_file << userDatabase[username][5];
                             home_file.close();
                             
                             ofstream shell_file(user_path + "/shell");
-                            if (shell_file.is_open()) shell_file << user_database[username][6];
+                            if (shell_file.is_open()) shell_file << userDatabase[username][6];
                             shell_file.close();
                         }
                     }
@@ -77,13 +79,15 @@ void c_vfs_mon() {
     }
 }
 
-void sign(int sig) {
+// Обработчик сигналов
+void handleSignal(int sig) {
     if (sig == SIGHUP) {
         cout << "Configuration reloaded" << endl;
     }
 }
 
-vector<string> split(const string& s, char delimiter) {
+// Разделение строки на токены по разделителю
+vector<string> splitString(const string& s, char delimiter) {
     vector<string> tokens;
     string token;
     istringstream tokenStream(s);
@@ -95,7 +99,8 @@ vector<string> split(const string& s, char delimiter) {
     return tokens;
 }
 
-string trim(const string& str) {
+// Удаление пробелов в начале и конце строки
+string trimWhitespace(const string& str) {
     size_t start = str.find_first_not_of(" \t\n\r");
     size_t end = str.find_last_not_of(" \t\n\r");
     if (start == string::npos || end == string::npos) {
@@ -104,7 +109,8 @@ string trim(const string& str) {
     return str.substr(start, end - start + 1);
 }
 
-string homedir() {
+// Получение домашней директории пользователя
+string getHomeDirectory() {
     const char* home = getenv("HOME");
     if (home) return string(home);
     
@@ -114,16 +120,18 @@ string homedir() {
     return ".";
 }
 
-void history(const string& command) {
-    if (!command.empty() && command != "\\q" && outFile.is_open()) {
-        outFile << command << endl;
-        outFile.flush();
+// Запись команды в историю
+void logCommandHistory(const string& command) {
+    if (!command.empty() && command != "\\q" && historyFile.is_open()) {
+        historyFile << command << endl;
+        historyFile.flush();
     }
 }
 
-void debug(const string& command) {
+// Вывод отладочного сообщения
+void printDebugMessage(const string& command) {
     string text = command.substr(5);
-    text = trim(text);
+    text = trimWhitespace(text);
     
     if (text.length() >= 2 && 
         ((text[0] == '\'' && text[text.length()-1] == '\'') ||
@@ -134,11 +142,12 @@ void debug(const string& command) {
     cout << text << endl;
 }
 
-void env(const string& command) {
+// Вывод значения переменной окружения
+void displayEnvironmentVariable(const string& command) {
     size_t dollar = command.find('$');
     if (dollar != string::npos) {
         string name = command.substr(dollar + 1);
-        name = trim(name);
+        name = trimWhitespace(name);
         
         string clear;
         for (char c : name) {
@@ -151,7 +160,7 @@ void env(const string& command) {
         
         if (const char* value = getenv(clear.c_str())) {
             if (clear == "PATH") {
-                vector<string> paths = split(value, ':');
+                vector<string> paths = splitString(value, ':');
                 vector<string> unique;
                 for (const auto& path : paths) {
                     if (!path.empty() && find(unique.begin(), unique.end(), path) == unique.end()) {
@@ -168,8 +177,9 @@ void env(const string& command) {
     }
 }
 
-void execute(const string& command) {
-    vector<string> args = split(command, ' ');
+// Выполнение команды в системе
+void runSystemCommand(const string& command) {
+    vector<string> args = splitString(command, ' ');
     if (args.empty()) return;
     
     vector<char*> c_args;
@@ -188,7 +198,8 @@ void execute(const string& command) {
     }
 }
 
-bool check_sign(const string& device) {
+// Проверка сигнатуры MBR
+bool checkMBRSignature(const string& device) {
     ifstream disk(device, ios::binary);
     if (!disk) {
         cout << "Error: cannot open device " << device << endl;
@@ -217,7 +228,8 @@ bool check_sign(const string& device) {
     }
 }
 
-void part_table(const string& device) {
+// Вывод таблицы разделов
+void printPartitionTable(const string& device) {
     ifstream disk(device, ios::binary);
     if (!disk) return;
     
@@ -247,12 +259,13 @@ void part_table(const string& device) {
     }
 }
 
-void list_part(const string& device) {
+// Список разделов устройства
+void listPartitions(const string& device) {
     cout << "Checking MBR signature on " << device << "..." << endl;
     
-    if (check_sign(device)) {
+    if (checkMBRSignature(device)) {
         cout << "Partition table for " << device << ":" << endl;
-        part_table(device);
+        printPartitionTable(device);
     } else {
         cout << "No valid MBR found or device cannot be accessed" << endl;
         cout << "Trying alternative method..." << endl;
@@ -261,28 +274,30 @@ void list_part(const string& device) {
     }
 }
 
-void load_user() {
-    user_database.clear();
+// Загрузка базы данных пользователей
+void loadUserDatabase() {
+    userDatabase.clear();
     ifstream passwd_file("/etc/passwd");
     string line;
     
     while (getline(passwd_file, line)) {
-        vector<string> fields = split(line, ':');
+        vector<string> fields = splitString(line, ':');
         if (fields.size() >= 7) {
-            user_database[fields[0]] = fields;
+            userDatabase[fields[0]] = fields;
         }
     }
     passwd_file.close();
 }
 
-void vfsWithPass() {
-    mkdir(users_dir.c_str(), 493);
+// Создание VFS для пользователей
+void createUserVFS() {
+    mkdir(usersDirectory.c_str(), 493);
     
-    for (const auto& [username, fields] : user_database) {
+    for (const auto& [username, fields] : userDatabase) {
         if (fields.size() >= 7) {
             string shell = fields[6];
             if (shell.length() >= 2 && shell.substr(shell.length() - 2) == "sh") {
-                string user_dir = users_dir + "/" + username;
+                string user_dir = usersDirectory + "/" + username;
                 mkdir(user_dir.c_str(), 493);
                 
                 ofstream id_file(user_dir + "/id");
@@ -301,37 +316,38 @@ void vfsWithPass() {
     }
 }
 
-void init_user() {
-    users_dir = "/opt/users";
+// Инициализация окружения пользователей
+void initializeUserEnvironment() {
+    usersDirectory = "/opt/users";
     
-    load_user();
+    loadUserDatabase();
     
-    if (user_database.find("root") == user_database.end()) {
+    if (userDatabase.find("root") == userDatabase.end()) {
         vector<string> root_fields = {"root", "x", "0", "0", "root", "/root", "/bin/bash"};
-        user_database["root"] = root_fields;
+        userDatabase["root"] = root_fields;
     }
     
-    mkdir(users_dir.c_str(), 493);
-    vfsWithPass();
+    mkdir(usersDirectory.c_str(), 493);
+    createUserVFS();
     
-    cout << "Users VFS mounted at: " << users_dir << endl;
+    cout << "Users VFS mounted at: " << usersDirectory << endl;
 }
 
 int main() {
-    string home_dir = homedir();
-    file = home_dir + "/.kubsh_history";
-    outFile.open(file, ios::app);
+    string home_dir = getHomeDirectory();
+    historyFilePath = home_dir + "/.kubsh_history";
+    historyFile.open(historyFilePath, ios::app);
     
-    signal(SIGHUP, sign);
+    signal(SIGHUP, handleSignal);
     
-    init_user();
-    thread monitor_thread(c_vfs_mon);
+    initializeUserEnvironment();
+    thread monitor_thread(monitorUserDirectories);
     monitor_thread.detach();
     
     string input;
     
     while(true) {
-        if (!testflag) {
+        if (!isTestMode) {
             cout << "$ ";
             cout.flush();
         }
@@ -340,48 +356,54 @@ int main() {
             break;
         }
         
-        string trinput = trim(input);
+        string trinput = trimWhitespace(input);
         
         if (trinput.empty()) {
             continue;
         }
         
-        history(trinput);
+        logCommandHistory(trinput);
         
+        // Выход
         if (trinput == "\\q") {
             break;
         }
+        // Дебаг
         else if (trinput.find("debug") == 0) {
-            debug(trinput);
-            if (testflag) exit(0);
+            printDebugMessage(trinput);
+            if (isTestMode) exit(0);
         }
+        // Эхо
         else if (trinput.find("\\e") == 0) {
-            env(trinput);
-            if (testflag) exit(0);
+            displayEnvironmentVariable(trinput);
+            if (isTestMode) exit(0);
         }
+        // Сat
         else if (trinput.find("cat") == 0) {
-            execute(trinput);
-            if (testflag) exit(0);
+            runSystemCommand(trinput);
+            if (isTestMode) exit(0);
         }
+        // Разделы диска
         else if (trinput.find("\\l") == 0) {
-            vector<string> parts = split(trinput, ' ');
+            vector<string> parts = splitString(trinput, ' ');
             if (parts.size() >= 2) {
-                list_part(parts[1]);
+                listPartitions(parts[1]);
             } else {
                 cout << "Usage: \\l <device>" << endl;
             }
-            if (testflag) exit(0);
+            if (isTestMode) exit(0);
         }
+        // Неподдерживаемая команда
         else {
             cout << trinput << ": command not found" << endl;
-            if (testflag) exit(0);
+            if (isTestMode) exit(0);
         }
     }
     
-    stop_monitoring = true;
+    stopMonitoring = true;
     
-    if (outFile.is_open()) {
-        outFile.close();
+    if (historyFile.is_open()) {
+        historyFile.close();
     }
     
     return 0;

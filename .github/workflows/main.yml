@@ -8,10 +8,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Run Docker tests
+    - name: Run tests
       run: |
-        docker build -t vfs-test .
-        docker run --rm --privileged vfs-test
+        docker build -t kubsh-test .
+        docker run --rm --privileged \
+          -v $(pwd):/opt \
+          kubsh-test /bin/bash -c "chmod +x /opt/check.sh && /opt/check.sh"
         
   build:
     needs: test
@@ -21,7 +23,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Build DEB package
+    - name: Build .deb
       run: |
         sudo apt update
         sudo apt install -y g++ make libreadline-dev devscripts debhelper
@@ -43,7 +45,7 @@ jobs:
         
         dpkg-deb --build kubsh-package kubsh.deb
         
-    - name: Upload DEB package
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: kubsh-deb
