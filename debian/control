@@ -1,0 +1,14 @@
+Source: kubsh
+Section: utils
+Priority: optional
+Maintainer: CI Builder <ci@example.com>
+Build-Depends: cmake, debhelper-compat (= 13), g++, libc6-dev
+Standards-Version: 4.6.0
+Homepage: https://github.com/yourusername/kubsh
+
+Package: kubsh
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Custom shell with VFS monitoring
+ A custom shell implementation with virtual file system
+ monitoring capabilities.

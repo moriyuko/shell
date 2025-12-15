@@ -1,11 +1,17 @@
-*
+kubsh
+kubsh_history.txt
+build
+build/
+debian/.debhelper/
+debian/files
+debian/kubsh.substvars
+debian/kubsh
+../*deb
+.pytest_cache
 
-!.gitignore
-
-!Makefile
-
-!src
-!src/**
-
-!debian
-!debian/**
+kubsh
+debian/debhelper-build-stamp
+build/CMakeCache.txt
+.vscode/
+__pycache__
+__pycache__/*

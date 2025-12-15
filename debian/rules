@@ -1,0 +1,14 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	mkdir -p build
+	cd build && cmake ..
+
+override_dh_auto_build:
+	cd build && make
+
+override_dh_auto_install:
+	cd build && make install DESTDIR=$$(pwd)/../debian/kubsh

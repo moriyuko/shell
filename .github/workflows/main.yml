@@ -1,10 +1,6 @@
-name: Build and Test
+name: CI/CD
 
-on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+on: [push, pull_request]
 
 jobs:
   test:
@@ -12,21 +8,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Run tests
+    - name: Run Docker tests
       run: |
-        docker pull moriyuko/test_kubsh:latest
-
-        docker run --rm --privileged\
-          -v "${{ github.workspace }}":/app \
-          -w /app \
-          moriyuko/test_kubsh:latest \
-          bash -euo pipefail -c "
-            g++ -o /app/kubsh src/main.cpp -lreadline -lfuse3
-            chmod +x /app/kubsh
-            cp /app/kubsh /usr/local/bin/kubsh
-            /opt/check.sh
-          "
-  
+        docker build -t vfs-test .
+        docker run --rm --privileged vfs-test
+        
   build:
     needs: test
     runs-on: ubuntu-latest
@@ -35,15 +21,27 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install build dependencies
+    - name: Build DEB package
       run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential debhelper fakeroot dpkg-dev
-
-    - name: Build .deb package
-      run: |
-        make deb
-        make clean
+        sudo apt update
+        sudo apt install -y g++ make libreadline-dev devscripts debhelper
+        
+        mkdir -p kubsh-package/usr/local/bin
+        mkdir -p kubsh-package/DEBIAN
+        
+        g++ -std=c++11 -o kubsh-package/usr/local/bin/kubsh src/main.cpp -lreadline
+        
+        cat > kubsh-package/DEBIAN/control << EOF
+        Package: kubsh
+        Version: 1.0
+        Section: utils
+        Priority: optional
+        Architecture: amd64
+        Maintainer: CI Builder
+        Description: Custom shell with VFS
+        EOF
+        
+        dpkg-deb --build kubsh-package kubsh.deb
         
     - name: Upload DEB package
       uses: actions/upload-artifact@v4
